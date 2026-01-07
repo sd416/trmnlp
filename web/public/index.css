@@ -104,6 +104,58 @@ pre > code {
   }
 }
 
+/* Payload size indicators */
+.payload-sizes {
+  display: flex;
+  gap: 1em;
+  margin: 0.5em 0;
+}
+
+.payload-size {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  font-size: 0.9em;
+  padding: 0.3em 0.6em;
+  border-radius: 0.5em;
+  border: 1px solid var(--border-color);
+  background: var(--bg-color);
+}
+
+.payload-size__label {
+  font-weight: 500;
+}
+
+.payload-size__value {
+  padding: 0.2em 0.5em;
+  border-radius: 0.25em;
+  font-weight: bold;
+  font-family: monospace;
+  min-width: 5em;
+  text-align: center;
+}
+
+/* Payload size color states */
+.payload-size--green .payload-size__value {
+  background-color: #22c55e;
+  color: white;
+}
+
+.payload-size--yellow .payload-size__value {
+  background-color: #eab308;
+  color: black;
+}
+
+.payload-size--red .payload-size__value {
+  background-color: #ef4444;
+  color: white;
+}
+
+/* Payload size loading state */
+.payload-size--loading .payload-size__value {
+  opacity: 0.5;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg-color: #191b21;

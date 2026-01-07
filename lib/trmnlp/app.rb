@@ -80,6 +80,27 @@ module TRMNLP
       get "/render/#{view}.html" do
         @context.render_full_page(view, params)
       end
+
+      get "/render/#{view}.size" do
+        content_type :json
+        
+        # Calculate HTML size
+        html = @context.render_full_page(view, params)
+        html_size = html.bytesize
+        
+        # Calculate PNG size
+        width = params[:width] && params[:width].to_i
+        height = params[:height] && params[:height].to_i
+        color_depth = params[:color_depth] && params[:color_depth].to_i
+        
+        generator = ScreenGenerator.new(html, image: true, width: width, height: height, color_depth: color_depth)
+        temp_image = generator.process
+        png_size = File.size(temp_image.path)
+        temp_image.close
+        temp_image.unlink
+        
+        { html_size: html_size, png_size: png_size }.to_json
+      end
       
       get "/render/#{view}.png" do
         @view = view
