@@ -46,6 +46,7 @@ If you have built a plugin with the web-based editor, you can `clone` it, work o
 
 ```sh
 trmnlp login                   # authenticate
+trmnlp list                    # list your plugins
 trmnlp clone [my_plugin] [id]  # first download
 cd [my_plugin]
 trmnlp serve                   # develop locally
@@ -104,6 +105,7 @@ Then run commands inside the container:
 
 ```sh
 trmnlp login
+trmnlp list                    # see all your plugins with IDs
 trmnlp clone my_plugin 12345
 cd my_plugin
 trmnlp serve
