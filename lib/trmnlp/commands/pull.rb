@@ -1,3 +1,4 @@
+require 'fileutils'
 require 'zip'
 
 require_relative 'base'
@@ -27,7 +28,9 @@ module TRMNLP
             zip_file.each do |entry|
               dest_path = paths.src_dir.join(entry.name)
               dest_path.dirname.mkpath
+              FileUtils.chmod(0644, dest_path) if dest_path.exist? && !dest_path.writable?
               zip_file.extract(entry, dest_path) { true } # overwrite existing
+              FileUtils.chmod(0644, dest_path) if dest_path.file?
             end
           end
 

@@ -31,6 +31,7 @@ module TRMNLP
 
           output "Creating #{destination_pathname}"
           FileUtils.cp(source_pathname, destination_pathname)
+          FileUtils.chmod(0644, destination_pathname)
         end
 
         output <<~HEREDOC
