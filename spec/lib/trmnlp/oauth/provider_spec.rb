@@ -95,6 +95,13 @@ RSpec.describe TRMNLP::OAuth::Provider do
         expect(provider.client_id).to eq('from-env')
       end
     end
+    context 'when the settings value is blank' do
+      let(:settings) { { 'oauth_client_id' => '' } }
+
+      it 'is nil' do
+        expect(provider.client_id).to be_nil
+      end
+    end
   end
 
   describe '#client_secret' do
@@ -109,6 +116,14 @@ RSpec.describe TRMNLP::OAuth::Provider do
 
       it 'prefers the env var' do
         expect(provider.client_secret).to eq('from-env')
+      end
+    end
+
+    context 'when the settings value is blank' do
+      let(:settings) { { 'oauth_client_secret' => '' } }
+
+      it 'is nil' do
+        expect(provider.client_secret).to be_nil
       end
     end
   end

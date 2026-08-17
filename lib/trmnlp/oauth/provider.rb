@@ -21,8 +21,8 @@ module TRMNLP
       def scope_separator = settings['oauth_scope_separator'] || ' '
       def pkce? = truthy?(settings['oauth_pkce_enabled'])
       def enabled? = truthy?(settings['oauth_enabled'])
-      def client_id = env_first(ENV_CLIENT_ID, settings['oauth_client_id'])
-      def client_secret = env_first(ENV_CLIENT_SECRET, settings['oauth_client_secret'])
+      def client_id = presence(env_first(ENV_CLIENT_ID, settings['oauth_client_id']))
+      def client_secret = presence(env_first(ENV_CLIENT_SECRET, settings['oauth_client_secret']))
 
       def configured?
         return false unless enabled? && authorize_url && token_url && client_id
@@ -42,6 +42,11 @@ module TRMNLP
       end
 
       def present?(value) = !value.nil? && !value.empty?
+
+      # A blank client_secret must behave as if it were absent; otherwise a
+      # PKCE public client would wrongly authenticate with HTTP Basic and the
+      # provider would reject the token exchange with "client_id is required".
+      def presence(value) = present?(value) ? value : nil
     end
   end
 end

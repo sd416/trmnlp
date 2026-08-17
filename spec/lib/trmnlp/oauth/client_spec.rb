@@ -76,6 +76,17 @@ RSpec.describe TRMNLP::OAuth::Client do
           .with(body: hash_including('client_id' => 'cid'))).to have_been_made
       end
     end
+
+    context 'as a public client with a blank secret in settings' do
+      let(:config) { super().merge('oauth_client_secret' => '', 'oauth_pkce_enabled' => 'true') }
+
+      it 'sends the client_id in the request body' do
+        client.exchange_code(code: 'thecode', redirect_uri:)
+
+        expect(a_request(:post, 'https://provider.test/token')
+          .with(body: hash_including('client_id' => 'cid'))).to have_been_made
+      end
+    end
   end
 
   describe '#refresh' do
