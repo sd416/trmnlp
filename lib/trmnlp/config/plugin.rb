@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 require 'cgi'
+require 'json'
 require 'yaml'
 
 require_relative '../errors'
 require_relative '../framework_version'
+require_relative '../select_field_choices'
 
 module TRMNLP
   class Config
@@ -26,22 +28,28 @@ module TRMNLP
       end
 
       def strategy = @config['strategy']
+      def refresh_interval = @config['refresh_interval']
       def polling? = strategy == 'polling'
       def webhook? = strategy == 'webhook'
       def static? = strategy == 'static'
+      def async_polling? = strategy == 'async_polling'
+      def plugin_merge? = strategy == 'plugin_merge'
 
+      # TRMNL transforms a webhook post as it arrives, and never transforms async_polling or plugin_merge data.
+      def transforms_on_render? = !(webhook? || async_polling? || plugin_merge?)
+
+      # One url per line, as TRMNL reads them: CR or LF, squished, blank lines dropped.
       def polling_urls(extra_variables: {})
-        # allow project-level config to override
-        urls = project_config.user_data_overrides.dig('trmnl', 'plugin_settings',
-                                                      'polling_url') || @config['polling_url']
+        return [] if polling_url_text.nil?
 
-        return [] if urls.nil?
-
-        with_custom_fields(urls, extra_variables:).strip.split("\n")
+        with_custom_fields(polling_url_text, extra_variables:).tr("\r", "\n").split("\n")
+                                                              .map { it.gsub(/\s+/, ' ').strip }.reject(&:empty?)
       end
 
-      # for {{ trmnl }}
-      def polling_url_text = polling_urls.join("\r\n")
+      # Unrendered, as TRMNL exposes it to markup. A project-level override wins.
+      def polling_url_text
+        project_config.user_data_overrides.dig('trmnl', 'plugin_settings', 'polling_url') || @config['polling_url']
+      end
 
       def polling_verb = @config['polling_verb'] || 'GET'
 
@@ -53,9 +61,6 @@ module TRMNLP
         string_to_hash(rendered)
       end
 
-      # for {{ trmnl }}
-      def polling_headers_encoded = polling_headers.map { |k, v| "#{k}=#{v}" }.join('&')
-
       def polling_body(extra_variables: {}) = with_custom_fields(@config['polling_body'] || '', extra_variables:)
 
       def dark_mode = @config['dark_mode'] || 'no'
@@ -64,8 +69,10 @@ module TRMNLP
 
       def id = @config['id']
 
+      # Like TRMNL: blank is no data, and a byte order mark is not part of the JSON.
       def static_data
-        JSON.parse(@config['static_data'] || '{}')
+        text = @config['static_data'].to_s.delete_prefix("\uFEFF")
+        text.strip.empty? ? {} : JSON.parse(text)
       rescue JSON::ParserError
         raise InvalidConfig, 'invalid JSON in static_data'
       end
@@ -99,6 +106,23 @@ module TRMNLP
       # Config::Project#custom_fields, which holds the field *values*.
       def custom_field_definitions = @config['custom_fields'] || []
 
+      # What TRMNL renders with: a select's label saved as its value, a blank value as its default.
+      def custom_fields_values
+        values = project_config.custom_fields_with_env.to_h { |keyname, value| [keyname, stored_value(keyname, value)] }
+        custom_field_defaults.merge(values) { |_, default, value| value.to_s.strip.empty? ? default : value }
+      end
+
+      # Fields a polling url needs that are still blank. TRMNL skips polling until they are filled in.
+      def missing_required_fields
+        url = polling_url_text.to_s
+        return [] if url.strip.empty?
+
+        values = custom_fields_values
+        custom_field_definitions.reject { it['optional'] || blank_is_a_valid_answer?(it) }
+                                .map { it['keyname'] }
+                                .select { interpolated_without_default?(url, it) && values[it].to_s.strip.empty? }
+      end
+
       # The raw parsed settings.yml hash. Most callers want the semantic
       # readers above; `trmnlp lint` needs the uninterpreted values because
       # it searches the raw {{ }} templates the semantic readers render away.
@@ -109,16 +133,57 @@ module TRMNLP
       attr_reader :paths, :project_config
 
       def with_custom_fields(value, extra_variables: {})
-        project_config.with_custom_fields(value, extra_variables:)
+        project_config.with_custom_fields(value, values: custom_fields_values, extra_variables:)
       end
 
-      def string_to_hash(str, delimiter: '=')
-        str.split('&').map do |k_v|
-          key, value = k_v.split(delimiter)
+      def custom_field_defaults
+        custom_field_definitions.to_h { [it['keyname'], it['default']] }.reject { |_, default| default.to_s.empty? }
+      end
+
+      def stored_value(keyname, value)
+        field = custom_field_definitions.find { it['keyname'] == keyname && it['field_type'] == 'select' }
+        field ? SelectFieldChoices.new(field).stored_value(value) : value
+      end
+
+      def interpolated_without_default?(url, keyname)
+        url.scan(/\{\{-?\s*(?:trmnl\.plugin_settings\.custom_fields_values\.)?#{Regexp.escape(keyname)}\b([^}]*)/)
+           .any? { |(filters)| !filters.match?(/\|\s*default\s*:/) }
+      end
+
+      # A select's empty option is an answer, not a gap.
+      def blank_is_a_valid_answer?(field)
+        field['field_type'] == 'boolean' || !field['default'].to_s.strip.empty? || field['conditional_validation'] ||
+          Array(field['options']).any? { it.is_a?(Hash) ? it.values.first.to_s.strip.empty? : it.to_s.strip.empty? }
+      end
+
+      # Mirrors the hosted service's Plugins::Helpers::Transformer#string_to_hash.
+      def string_to_hash(str)
+        return json_to_hash(str) if str.strip.start_with?('{')
+
+        str.split(/[\n&]/).filter_map do |pair|
+          pair = pair.strip
+          key, value = pair.split(delimiter_for(pair), 2)
           next if value.nil?
 
-          { key => CGI.unescape_uri_component(value) }
-        end.compact.reduce({}, :merge)
+          [key.strip, CGI.unescape_uri_component(value.strip)]
+        end.to_h
+      end
+
+      # ": " (not ":") so an "https://" URL isn't mistaken for a "Name: Value" header.
+      def delimiter_for(pair)
+        equals = pair.index('=')
+        colon = pair.index(': ')
+        return '=' if colon.nil?
+        return ': ' if equals.nil?
+
+        colon < equals ? ': ' : '='
+      end
+
+      def json_to_hash(str)
+        parsed = JSON.parse(str)
+        parsed.is_a?(Hash) ? parsed.transform_values(&:to_s) : {}
+      rescue JSON::ParserError
+        {}
       end
     end
   end

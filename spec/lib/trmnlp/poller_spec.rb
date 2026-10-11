@@ -50,11 +50,79 @@ RSpec.describe TRMNLP::Poller do
       { name: 'plain text',
         header: 'text/plain',
         body: 'hello world',
-        parsed: { 'data' => 'hello world' } }
+        parsed: { 'data' => 'hello world' } },
+      { name: 'csv',
+        header: 'text/csv',
+        body: "a,b\n1,2\n",
+        parsed: { data: [%w[a b], %w[1 2]] } },
+      { name: 'markdown',
+        header: 'text/markdown',
+        body: '# Hi',
+        parsed: { 'data' => '# Hi' } },
+      { name: 'json behind a byte order mark',
+        header: 'application/json',
+        body: "\xEF\xBB\xBF{\"a\": 1}",
+        parsed: { 'a' => 1 } },
+      { name: 'json under an unlisted type',
+        header: 'application/octet-stream',
+        body: '{"a": 1}',
+        parsed: { 'a' => 1 } }
     ]
   end
   let(:expected_by_case) { content_type_cases.to_h { |test_case| [test_case[:name], test_case[:parsed]] } }
   let(:headerless_response) { instance_double(Faraday::Response, body: 'foobar', headers: {}, status: 200) }
+
+  describe '#poll_data with an outbound request of its own' do
+    subject(:poller) { described_class.new(config:, paths:, oauth_session:, outbound_request:) }
+
+    let(:outbound_request) { instance_double(TRMNLP::OutboundRequest, call: [response, nil]) }
+    let(:response) do
+      instance_double(Faraday::Response, body: '{"from": "stub"}', status: 200,
+                                         headers: { 'content-type' => 'application/json' })
+    end
+
+    before do
+      allow(poller).to receive(:write_user_data)
+      allow(config.plugin).to receive_messages(polling?: true, polling_urls: ['https://example.com/api'],
+                                               polling_headers: {}, polling_verb: 'GET')
+    end
+
+    it 'fetches through it' do
+      expect(poller.poll_data).to eq('from' => 'stub')
+    end
+  end
+
+  describe '#poll_data without a polling url' do
+    subject(:poller) { described_class.new(config:, paths:, oauth_session:, reporter:) }
+
+    let(:reporter) { TRMNLP::Reporter.new(quiet: true) }
+    let(:cache_dir) { Pathname.new(Dir.mktmpdir) }
+
+    before do
+      allow(paths).to receive(:cache_dir).and_return(cache_dir)
+      allow(config.plugin).to receive_messages(polling?: true, polling_urls: [])
+      paths.fetch_failed_marker.dirname.mkpath
+      paths.fetch_failed_marker.write('')
+    end
+
+    after { FileUtils.remove_entry(cache_dir) }
+
+    it 'answers empty data for the transform, as TRMNL does' do
+      expect(poller.poll_data).to eq({})
+    end
+
+    it 'does not count as a failed fetch, so the transform keeps its state' do
+      poller.poll_data
+
+      expect(paths.fetch_failed_marker).not_to exist
+    end
+
+    it 'does not warn' do
+      poller.poll_data
+
+      expect(reporter.messages).to be_empty
+    end
+  end
 
   describe '#poll_data' do
     let(:faraday_connection) { instance_double(Faraday::Connection) }
@@ -101,6 +169,83 @@ RSpec.describe TRMNLP::Poller do
 
         it 'parses to an empty hash' do
           expect(poller.poll_data).to eq({})
+        end
+      end
+
+      context 'when the response is not a 200' do
+        subject(:poller) { described_class.new(config:, paths:, oauth_session:, reporter:) }
+
+        let(:reporter) { TRMNLP::Reporter.new(quiet: true) }
+        let(:json_headers) { { 'content-type' => 'application/json' } }
+
+        it 'parses the body of a 202, like the hosted service' do
+          response = instance_double(Faraday::Response, body: '{"step": "pending"}', status: 202, headers: json_headers)
+          allow(faraday_connection).to receive(:get).and_return(response)
+
+          expect(poller.poll_data).to eq({ 'step' => 'pending' })
+        end
+
+        it 'still parses the body of a client error' do
+          response = instance_double(Faraday::Response, body: '{"error": "nope"}', status: 404, headers: json_headers)
+          allow(faraday_connection).to receive(:get).and_return(response)
+
+          expect(poller.poll_data).to eq({ 'error' => 'nope' })
+        end
+
+        it 'warns about a client error' do
+          response = instance_double(Faraday::Response, body: '{}', status: 404, headers: json_headers)
+          allow(faraday_connection).to receive(:get).and_return(response)
+          poller.poll_data
+
+          expect(reporter.messages).to include(a_string_matching(/HTTP 404 from/))
+        end
+
+        it 'drops the body of a server error, as the hosted service does' do
+          response = instance_double(Faraday::Response, body: '{"error": "nope"}', status: 500, headers: json_headers)
+          allow(faraday_connection).to receive(:get).and_return(response)
+
+          expect(poller.poll_data).to eq({})
+        end
+
+        it 'names the server error' do
+          response = instance_double(Faraday::Response, body: '{}', status: 503, headers: json_headers)
+          allow(faraday_connection).to receive(:get).and_return(response)
+          poller.poll_data
+
+          expect(reporter.messages).to include(a_string_matching(/Unable to fetch .* — the host replied 503/))
+        end
+      end
+
+      context 'when recording whether the poll failed, for the transform state' do
+        let(:cache_dir) { Pathname.new(Dir.mktmpdir) }
+        let(:json_headers) { { 'content-type' => 'application/json' } }
+        let(:ok) { instance_double(Faraday::Response, body: '{}', status: 200, headers: json_headers) }
+
+        before { allow(paths).to receive(:cache_dir).and_return(cache_dir) }
+        after { FileUtils.remove_entry(cache_dir) }
+
+        it 'marks a client error as a failed fetch' do
+          allow(faraday_connection).to receive(:get)
+            .and_return(instance_double(Faraday::Response, body: '{}', status: 404, headers: json_headers))
+          poller.poll_data
+
+          expect(paths.fetch_failed_marker).to exist
+        end
+
+        it 'marks a server error as a failed fetch' do
+          allow(faraday_connection).to receive(:get)
+            .and_return(instance_double(Faraday::Response, body: '{}', status: 503, headers: json_headers))
+          poller.poll_data
+
+          expect(paths.fetch_failed_marker).to exist
+        end
+
+        it 'clears the mark after a clean poll' do
+          allow(faraday_connection).to receive(:get)
+            .and_return(instance_double(Faraday::Response, body: '{}', status: 404, headers: json_headers), ok)
+          2.times { poller.poll_data }
+
+          expect(paths.fetch_failed_marker).not_to exist
         end
       end
     end
@@ -158,6 +303,45 @@ RSpec.describe TRMNLP::Poller do
         expect(config.plugin).to have_received(:polling_urls)
           .with(extra_variables: { 'oauth_access_token' => 'AT' })
       end
+
+      context 'when the provider rejects the token with a 401' do
+        let(:unauthorized) { instance_double(Faraday::Response, body: '', status: 401, headers: {}) }
+        let(:authorized) do
+          instance_double(Faraday::Response, body: '{"ok": 1}', status: 200,
+                                             headers: { 'content-type' => 'application/json' })
+        end
+
+        before do
+          allow(oauth_session).to receive(:liquid_variables)
+            .and_return({ 'oauth_access_token' => 'AT' }, { 'oauth_access_token' => 'AT2' })
+          allow(faraday_connection).to receive(:get).and_return(unauthorized, authorized)
+        end
+
+        context 'and the token refreshes' do
+          before { allow(oauth_session).to receive(:force_refresh!).and_return(instance_double(TRMNLP::OAuth::TokenBundle)) }
+
+          it 'polls again with the refreshed token' do
+            poller.poll_data
+
+            expect(config.plugin).to have_received(:polling_urls)
+              .with(extra_variables: { 'oauth_access_token' => 'AT2' })
+          end
+
+          it 'answers the retried response' do
+            expect(poller.poll_data).to eq({ 'ok' => 1 })
+          end
+        end
+
+        context 'and there is nothing to refresh' do
+          before { allow(oauth_session).to receive(:force_refresh!).and_return(nil) }
+
+          it 'polls once' do
+            poller.poll_data
+
+            expect(faraday_connection).to have_received(:get).once
+          end
+        end
+      end
     end
 
     context 'when the plugin is not configured for polling' do
@@ -171,6 +355,180 @@ RSpec.describe TRMNLP::Poller do
         poller.poll_data
 
         expect(poller).not_to have_received(:write_user_data)
+      end
+    end
+  end
+
+  describe '#poll_data against a real request' do
+    subject(:poller) { described_class.new(config:, paths:, oauth_session:, reporter:, trmnl_variables:) }
+
+    let(:reporter) { TRMNLP::Reporter.new(quiet: true) }
+    let(:trmnl_variables) { -> { { 'trmnl' => { 'user' => { 'time_zone_iana' => 'Europe/Paris' } } } } }
+    let(:cache_dir) { Pathname.new(Dir.mktmpdir) }
+    let(:fields) { [{ 'keyname' => 'api_key' }] }
+
+    before do
+      allow(paths).to receive(:cache_dir).and_return(cache_dir)
+      url = 'https://a.test/?tz={{ trmnl.user.time_zone_iana }}&key={{ api_key }}'
+      settings = { 'strategy' => 'polling', 'custom_fields' => fields, 'polling_url' => url }
+      config.plugin.instance_variable_set(:@config, settings)
+    end
+
+    after { FileUtils.remove_entry(cache_dir) }
+
+    context 'when a field the url needs is blank' do
+      it 'skips polling' do
+        page = stub_request(:get, /a\.test/)
+        poller.poll_data
+
+        expect(page).not_to have_been_requested
+      end
+
+      it 'names the blank field' do
+        poller.poll_data
+
+        expect(reporter.messages).to include(a_string_matching(/Plugin is not configured — fill in: api_key/))
+      end
+    end
+
+    context 'when every field is filled in' do
+      before { allow(config.project).to receive(:custom_fields).and_return('api_key' => 'abc') }
+
+      it 'renders the trmnl namespace into the url' do
+        page = stub_request(:get, 'https://a.test/?tz=Europe/Paris&key=abc').to_return(body: '{}')
+        poller.poll_data
+
+        expect(page).to have_been_requested
+      end
+
+      it 'leaves the query string, which may hold an api key, out of a warning' do
+        stub_request(:get, /a\.test/).to_return(status: 500)
+        poller.poll_data
+
+        expect(reporter.messages.grep(/Unable to fetch/))
+          .to eq(['warning: Unable to fetch data from url: https://a.test/ — the host replied 500'])
+      end
+
+      it 'leaves the query string out of the request log' do
+        stub_request(:get, /a\.test/).to_return(body: '{}')
+        poller.poll_data
+
+        expect(reporter.messages.grep(/received/)).to eq(['GET https://a.test/ — received 2 bytes (200 status)'])
+      end
+
+      it 'warns about malformed JSON' do
+        stub_request(:get, /a\.test/).to_return(body: 'nope', headers: { 'Content-Type' => 'application/json' })
+        poller.poll_data
+
+        expect(reporter.messages).to include(a_string_matching(/Malformed JSON from url/))
+      end
+    end
+  end
+
+  describe '#fetch_responses' do
+    subject(:poller) { described_class.new(config:, paths:, oauth_session:, reporter:, trmnl_variables:) }
+
+    let(:reporter) { TRMNLP::Reporter.new(quiet: true) }
+    let(:trmnl_variables) { -> { { 'trmnl' => { 'user' => { 'time_zone_iana' => 'Europe/Paris' } } } } }
+
+    before do
+      url = 'https://a.test/?tz={{ trmnl.user.time_zone_iana }}&key={{ api_key }}'
+      config.plugin.instance_variable_set(:@config, { 'strategy' => 'polling', 'polling_url' => url })
+      allow(config.project).to receive(:custom_fields).and_return('api_key' => 'abc')
+      stub_request(:get, 'https://a.test/?tz=Europe/Paris&key=abc').to_return(status: 201, body: '{}')
+    end
+
+    it 'answers each url as TRMNL resolves it, with its response' do
+      expect(poller.fetch_responses.map { |url, response| [url, response.status] })
+        .to eq([['https://a.test/?tz=Europe/Paris&key=abc', 201]])
+    end
+  end
+
+  describe '#poll_data for an async_polling plugin' do
+    subject(:poller) { described_class.new(config:, paths:, oauth_session:, reporter:, async_callback:) }
+
+    let(:reporter) { TRMNLP::Reporter.new(quiet: true) }
+    let(:async_callback) { TRMNLP::AsyncCallback.new(config:, paths:, reporter:) }
+    let(:cache_dir) { Pathname.new(Dir.mktmpdir) }
+    let(:callback_url) { 'http://localhost:4567/callback?v=1' }
+
+    before do
+      allow(paths).to receive(:cache_dir).and_return(cache_dir)
+      settings = { 'strategy' => 'async_polling', 'polling_url' => 'https://a.test/?cb={{ callback_url }}' }
+      config.plugin.instance_variable_set(:@config, settings)
+      async_callback.server_url = 'http://localhost:4567'
+    end
+
+    after { FileUtils.remove_entry(cache_dir) }
+
+    it 'renders the callback url into the polling url' do
+      request = stub_request(:get, 'https://a.test/').with(query: { 'cb' => callback_url }).to_return(status: 202)
+      poller.poll_data
+
+      expect(request).to have_been_requested
+    end
+
+    it 'awaits the callback after a 202' do
+      stub_request(:get, /a\.test/).to_return(status: 202)
+      poller.poll_data
+
+      expect(async_callback).to be_awaiting
+    end
+
+    it 'leaves the stored data in place' do
+      stub_request(:get, /a\.test/).to_return(status: 202, body: '{"ignored":true}')
+      poller.poll_data
+
+      expect(paths.user_data).not_to exist
+    end
+
+    it 'sends no second request while the callback is awaited' do
+      request = stub_request(:get, /a\.test/).to_return(status: 202)
+      2.times { poller.poll_data }
+
+      expect(request).to have_been_requested.once
+    end
+
+    it 'sends a new version once the callback is overdue' do
+      stub_request(:get, /a\.test/).to_return(status: 202)
+      poller.poll_data
+      allow(Time).to receive(:now).and_return(Time.now + (16 * 60))
+      later = stub_request(:get, 'https://a.test/').with(query: { 'cb' => 'http://localhost:4567/callback?v=2' })
+      poller.poll_data
+
+      expect(later).to have_been_requested
+    end
+
+    context 'when the API answers other than 202' do
+      before { stub_request(:get, /a\.test/).to_return(status: 200) }
+
+      it 'stops awaiting the callback' do
+        poller.poll_data
+
+        expect(async_callback).not_to be_awaiting
+      end
+
+      it 'warns without the query string' do
+        poller.poll_data
+
+        expect(reporter.messages).to include('warning: Async polling failed: HTTP 200 from https://a.test/')
+      end
+    end
+
+    context 'without a server to receive the callback' do
+      before { async_callback.server_url = nil }
+
+      it 'sends no request' do
+        request = stub_request(:get, /a\.test/)
+        poller.poll_data
+
+        expect(request).not_to have_been_requested
+      end
+
+      it 'says the callback needs trmnlp serve' do
+        poller.poll_data
+
+        expect(reporter.messages).to include(a_string_matching(/needs `trmnlp serve`/))
       end
     end
   end

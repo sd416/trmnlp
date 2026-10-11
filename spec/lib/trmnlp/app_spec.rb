@@ -372,16 +372,38 @@ RSpec.describe TRMNLP::App do
   end
 
   describe 'POST /webhook' do
-    let(:payload) { '{"items":[1,2,3]}' }
+    let(:payload) { '{"merge_variables":{"items":[1,2,3]}}' }
 
-    before { allow(context.poller).to receive(:put_webhook) }
+    before do
+      allow(context.webhook_receiver).to receive(:call)
+        .with(payload, { 'merge_strategy' => 'stream' })
+        .and_return([422, { message: 'nope' }])
+      post '/webhook?merge_strategy=stream', payload, { 'CONTENT_TYPE' => 'application/json' }
+    end
 
-    it 'forwards the body to the poller and returns OK' do
-      post '/webhook', payload, { 'CONTENT_TYPE' => 'application/json' }
+    it 'answers with the status from the receiver' do
+      expect(last_response.status).to eq(422)
+    end
 
-      expect(last_response.status).to eq(200)
-      expect(last_response.body).to eq('OK')
-      expect(context.poller).to have_received(:put_webhook).with(payload)
+    it 'answers with the JSON body from the receiver' do
+      expect(JSON.parse(last_response.body)).to eq('message' => 'nope')
+    end
+  end
+
+  describe 'POST /callback' do
+    let(:payload) { '{"merge_variables":{"items":[1]}}' }
+
+    before do
+      allow(context.async_callback).to receive(:call).with(payload, '3').and_return([410, { message: 'gone' }])
+      post '/callback?v=3', payload, { 'CONTENT_TYPE' => 'application/json' }
+    end
+
+    it 'answers with the status from the callback' do
+      expect(last_response.status).to eq(410)
+    end
+
+    it 'answers with the JSON body from the callback' do
+      expect(JSON.parse(last_response.body)).to eq('message' => 'gone')
     end
   end
 end

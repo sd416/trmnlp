@@ -1,0 +1,127 @@
+# frozen_string_literal: true
+
+# Loaded by `trmnlp test`: gives each example `trmnl`, Capybara's matchers and trmnlp's own.
+require 'rspec/core'
+require 'rspec/expectations'
+require 'capybara/rspec/matchers' # after rspec/expectations, or its matchers lose .and and .or
+
+require_relative '../../trmnlp'
+require_relative '../browser_pool'
+require_relative '../firefox_driver'
+require_relative 'browser'
+require_relative 'certificate_authority'
+require_relative 'page_server'
+require_relative 'plugin'
+require_relative 'report'
+require_relative 'publishable_recipe'
+require_relative 'snapshot'
+
+module TRMNLP
+  module Testing
+    PLUGIN_DIR_ENV_KEY = 'TRMNLP_PLUGIN_DIR'
+    # What a template or script draws when its data is missing.
+    LEAKED_TEXT_PATTERN = /Liquid (?:syntax )?error|\bundefined\b|\bNaN\b|\bnull\b|\[object Object\]|\{\{|\{%/
+
+    def self.plugin_dir = ENV.fetch(PLUGIN_DIR_ENV_KEY, Dir.pwd)
+
+    def self.authority
+      @authority ||= CertificateAuthority.new.tap { |authority| at_exit { authority.remove } }
+    end
+
+    def self.browser_pool
+      @browser_pool ||= BrowserPool.new(driver_factory: FirefoxDriver.method(:build), max_size: 1)
+    end
+
+    def self.page_server
+      @page_server ||= PageServer.new.start.tap { |server| at_exit { server.stop } }
+    end
+
+    module Helpers
+      def trmnl = @trmnl ||= Plugin.new(Testing.plugin_dir, browser: trmnl_browser, authority: Testing.authority)
+
+      def trmnl_browser
+        @trmnl_browser ||= Browser.new(pool: Testing.browser_pool, page_server: Testing.page_server)
+      end
+    end
+  end
+end
+
+RSpec::Matchers.define :have_no_overflow do |except: nil|
+  match { |screen| screen.overflowing(except:).empty? }
+  failure_message do |screen|
+    "expected nothing to overflow on #{screen.inspect}, but: #{screen.overflowing(except:).join(', ')}"
+  end
+end
+
+# TRMNL gives a transform 5 seconds and 128 MB (help.trmnl.com, Serverless).
+RSpec::Matchers.define :stay_within_serverless_limits do
+  match { |run| run.duration_ms.to_i <= 5000 && run.max_memory_mb.to_f <= 128 }
+  failure_message do |run|
+    "expected the transform to stay within 5000 ms and 128 MB, but it took #{run.duration_ms} ms " \
+      "and #{run.max_memory_mb} MB"
+  end
+end
+
+RSpec::Matchers.define :have_no_leaked_text do
+  match { |screen| screen.text.scan(TRMNLP::Testing::LEAKED_TEXT_PATTERN).empty? }
+  failure_message do |screen|
+    leaked = screen.text.scan(TRMNLP::Testing::LEAKED_TEXT_PATTERN).uniq
+    "expected no leaked values on #{screen.inspect}, but it shows: #{leaked.join(', ')}"
+  end
+end
+
+RSpec::Matchers.define :have_no_transform_error do
+  match { |screen| screen.result.error.nil? }
+  failure_message { |screen| "expected the transform to run without error, but: #{screen.result.error}" }
+end
+
+RSpec::Matchers.define :have_no_problems do
+  match { |screen| screen.problems.empty? }
+  failure_message { |screen| "expected no problems on #{screen.inspect}, but: #{screen.problems.join('; ')}" }
+end
+
+# A QR code that scans in the PNG; with a String or Regexp, one that reads as it.
+RSpec::Matchers.define :have_qr_code do |text = nil, within: nil|
+  match do |screen|
+    @found = screen.qr_codes(within:)
+    text ? @found.any? { text === it } : @found.any? # rubocop:disable Style/CaseEquality -- a String or a Regexp
+  end
+  failure_message do |screen|
+    wanted = text ? "a QR code reading #{text.inspect}" : 'a QR code that scans'
+    place = within ? " in #{within}" : ''
+    "expected #{wanted}#{place} on #{screen.inspect}, but " \
+      "#{@found.empty? ? 'none scans' : "found #{@found.map(&:inspect).join(', ')}"}"
+  end
+  failure_message_when_negated { |screen| "expected no QR code on #{screen.inspect}, but found #{@found.inspect}" }
+end
+
+RSpec::Matchers.define :fit_image_size_limit do
+  match { |screen| screen.png_bytes.bytesize <= screen.device.image_size_limit.to_i }
+  failure_message do |screen|
+    "expected the #{screen.device.name} PNG to fit #{screen.device.image_size_limit} bytes, " \
+      "but it is #{screen.png_bytes.bytesize}"
+  end
+end
+
+RSpec::Matchers.define :match_snapshot do |name = nil|
+  match do |screen|
+    example = RSpec.current_example
+    name ||= [example.full_description, screen.device.name, screen.view].join(' ').downcase.gsub(/[^a-z0-9]+/, '-')
+    dir = File.join(TRMNLP::Testing.plugin_dir, 'tests', 'snapshots')
+    @mismatch = TRMNLP::Testing::Snapshot.new(screen, name:, dir:).mismatch
+    @mismatch.nil?
+  end
+  failure_message { @mismatch }
+end
+
+RSpec.configure do |config|
+  if (report_dir = ENV.fetch('TRMNLP_REPORT_DIR', nil))
+    TRMNLP::Testing::Report.current = TRMNLP::Testing::Report.new(report_dir)
+    config.reporter.register_listener(TRMNLP::Testing::Report.current, :example_passed, :example_failed,
+                                      :example_pending, :close)
+  end
+
+  config.include Capybara::RSpecMatchers
+  config.include TRMNLP::Testing::Helpers
+  config.after { @trmnl_browser&.release }
+end

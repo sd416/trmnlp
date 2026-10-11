@@ -20,6 +20,10 @@ RSpec.describe TRMNLP::TransformPipeline do
       it 'returns the data untouched' do
         expect(pipeline.call('count' => 1)).to eq('count' => 1)
       end
+
+      it 'is not configured' do
+        expect(pipeline).not_to be_configured
+      end
     end
 
     context 'when a transform file is present' do
@@ -43,10 +47,111 @@ RSpec.describe TRMNLP::TransformPipeline do
         allow(TRMNLP::TransformClient).to receive(:from_config).and_return(client)
       end
 
+      context 'with a client of its own' do
+        subject(:pipeline) { described_class.new(config:, paths:, reporter:, client: own_client) }
+
+        let(:own_client) { instance_double(TRMNLP::TransformClient, execute: success_result) }
+
+        it 'runs the transform through it' do
+          expect(pipeline.call('n' => 2)).to eq('doubled' => 4)
+        end
+
+        it 'keeps it across a reset' do
+          pipeline.reset!
+          pipeline.call('n' => 2)
+
+          expect(own_client).to have_received(:execute)
+        end
+      end
+
       it 'returns the transform output on success' do
         allow(client).to receive(:execute).and_return(success_result)
 
         expect(pipeline.call('n' => 2)).to eq('doubled' => 4)
+      end
+
+      it 'keeps the returned trmnl_state out of the rendered data' do
+        allow(paths).to receive(:cache_dir).and_return(Pathname.new(tmp_root).join('cache'))
+        allow(client).to receive(:execute)
+          .and_return(success_result.with(output: '{"doubled":4,"trmnl_state":{"etag":"a"}}'))
+
+        expect(pipeline.call('n' => 2)).to eq('doubled' => 4)
+      end
+
+      context 'when the last poll of a polling plugin failed' do
+        before do
+          allow(paths).to receive(:cache_dir).and_return(Pathname.new(tmp_root).join('cache'))
+          allow(config.plugin).to receive(:polling?).and_return(true)
+          paths.fetch_failed_marker.dirname.mkpath
+          paths.fetch_failed_marker.write('')
+          allow(client).to receive(:execute)
+            .and_return(success_result.with(output: '{"doubled":4,"trmnl_state":{"etag":"from-nothing"}}'))
+        end
+
+        it 'keeps the last good state' do
+          pipeline.call('n' => 2)
+
+          expect(paths.transform_state).not_to exist
+        end
+      end
+
+      it 'stores the output for the next run without previous_merge_variables' do
+        allow(paths).to receive(:cache_dir).and_return(Pathname.new(tmp_root).join('cache'))
+        allow(client).to receive(:execute)
+          .and_return(success_result.with(output: '{"data":{"n":2,"previous_merge_variables":{"n":1}}}'))
+        pipeline.call('n' => 2)
+
+        expect(pipeline.previous_output).to eq('data' => { 'n' => 2 })
+      end
+
+      it 'stops the transform after 5 seconds, as TRMNL does' do
+        allow(client).to receive(:execute).and_return(success_result)
+        pipeline.call('n' => 2)
+
+        expect(client).to have_received(:execute).with(hash_including(timeout_seconds: 5))
+      end
+
+      it 'renders nothing from an output that is not an object' do
+        allow(client).to receive(:execute).and_return(success_result.with(output: '[1, 2]'))
+
+        expect(pipeline.call('n' => 2)).to eq({})
+      end
+
+      it 'explains an output that is not an object' do
+        allow(client).to receive(:execute).and_return(success_result.with(output: '[1, 2]'))
+        pipeline.call('n' => 2)
+
+        expect(pipeline.error).to eq('Transform output must be a JSON object')
+      end
+
+      context 'when a transform fails after a good run' do
+        before do
+          allow(paths).to receive(:cache_dir).and_return(Pathname.new(tmp_root).join('cache'))
+          allow(client).to receive(:execute).and_return(success_result, failure_result)
+          pipeline.call('n' => 2)
+        end
+
+        it 'keeps the last good output, as TRMNL keeps the last screen' do
+          expect(pipeline.call('n' => 3)).to eq('doubled' => 4)
+        end
+      end
+
+      it 'is configured' do
+        expect(pipeline).to be_configured
+      end
+
+      it 'reports what the transform printed' do
+        allow(client).to receive(:execute).and_return(success_result.with(stdout: "a log\n", stderr: "a warning\n"))
+        pipeline.call('n' => 2)
+
+        expect(reporter.messages).to eq(['transform stdout: a log', 'transform stderr: a warning'])
+      end
+
+      it 'reports nothing when the transform printed nothing' do
+        allow(client).to receive(:execute).and_return(success_result)
+        pipeline.call('n' => 2)
+
+        expect(reporter.messages).to be_empty
       end
 
       it 'falls back to the input data on failure' do
@@ -74,6 +179,13 @@ RSpec.describe TRMNLP::TransformPipeline do
         pipeline.call('n' => 2)
 
         expect(reporter.messages).to include(a_string_matching(/transform failed/))
+      end
+
+      it 'prints the stderr of a failure once' do
+        allow(client).to receive(:execute).and_return(failure_result)
+        pipeline.call('n' => 2)
+
+        expect(reporter.messages.grep(/boom/)).to eq(['transform stderr: boom'])
       end
     end
   end

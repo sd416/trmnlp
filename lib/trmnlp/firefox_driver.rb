@@ -15,12 +15,12 @@ module TRMNLP
     end
 
     def options
-      Selenium::WebDriver::Firefox::Options.new.tap do |opts|
+      Selenium::WebDriver::Firefox::Options.new(web_socket_url: true).tap do |opts|
         opts.add_argument('--headless')
         opts.add_argument('--disable-web-security')
-        # Subpixel antialiasing colour-fringes badly when quantized to 1-bit e-ink.
-        opts.add_preference('gfx.text.disable-aa', true)
-        opts.add_preference('gfx.text.subpixel-position.force-disabled', true)
+        # A page trmnlp test serves from 127.0.0.1 gets no storage, cookies or Referer, as on TRMNL's about:blank.
+        opts.add_preference('network.cookie.cookieBehavior', 2)
+        opts.add_preference('network.http.sendRefererHeader', 0)
       end
     end
   end

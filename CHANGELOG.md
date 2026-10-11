@@ -1,6 +1,173 @@
 
 # Changelog
 
+## 0.27.0
+
+- `trmnlp lint` reports a webhook recipe with no `copyable_webhook_url` custom field (`webhook_url_shown`), as TRMNL's recipe review does. Without it, people who install the recipe have no field to copy their webhook URL from.
+- A release pinned in a plugin's `bin/trmnlp`, such as `IMAGE=trmnl/trmnlp:v0.24.0`, is used when another copy of the script is on the PATH as `trmnlp`. The plugin ran the PATH copy's image instead. To get the fix in an existing plugin, run `trmnlp init` there and overwrite only `bin/trmnlp`.
+- `trmnlp version` says when it runs in Docker, and in which image, on a second line on stderr. The version stays alone on stdout.
+
+## 0.26.0
+
+- `trmnlp lint` names the sizes an element has when a size class is missing (`framework_classes_exist`), such as `title--small` to `title--xxlarge` for `title--mega`, and links to the Framework's Element Sizes page. Each element has its own set of sizes.
+- The `hn-stories` example uses `title--small` in its half views. It had `title--xsmall`, which no Framework release has, so those titles rendered at the default size.
+- `trmnlp lint` reports a Framework class behind screen prefixes that its release does not define for it (`framework_prefixes_exist`): a prefix that does not exist, such as `xl:value--large`, prefixes out of order, such as `portrait:lg:value--large`, or a prefix the class has no variant for, such as `dark:value--large`. TRMNL ignores the class and says nothing. The lists come from each release's `plugins.css`; `rake framework:classes` refreshes them.
+- `trmnlp lint` reports a plain `https://` link in a custom field's description (`custom_field_links_embedded`), as TRMNL's recipe review does. An embedded `<a>` link is shorter, opens in a new tab and is plainly clickable; a link written without `https://` stays an unlinked example.
+- `trmnlp lint` reports a `settings.yml`, view or transform over 100 KB (`files_under_upload_limit`). TRMNL refuses to import such a file, so `trmnlp push` failed, even when a transform trims the data and the plugin renders in `serve`. Thanks to @barrymichaeldoyle for #252.
+
+## 0.25.0
+
+- `trmnlp lint` also reports a `content--` class that the plugin's Framework release does not have (`framework_classes_exist`), such as `content--xsmall`. Rich Text sizes stop at `content--small`, and a missing one leaves the text at the default size.
+
+## 0.24.0
+
+- `it_behaves_like 'a publishable recipe'` names a screen's palette and dark mode in its examples, so a group that draws the TRMNL X in color and in 1-bit, or in light and dark, can tell them apart.
+- `trmnlp test --report` writes `og-vs-x.png`: the full view on TRMNL OG and TRMNL X side by side at the same height, first on the report page and as `og_vs_x` in `report.json`. It shows a recipe whose content is small on the X with a lot of empty space.
+- `trmnlp lint` reports a `select` form field with only Yes and No options (`yes_no_selects_are_boolean`), which should be a `boolean` switch, and separate latitude and longitude fields (`coordinates_use_lat_lon`), which should be one `lat_lon` field.
+- `trmnlp lint` reports a plugin whose `author_bio` custom field gives no email address, web link or GitHub link. TRMNL's recipe review asks for one, and a Discord link alone is not enough.
+- `trmnlp lint` reports a `title_bar` inside a `layout` (`title_bar_outside_layout`), a `layout` inside another `layout` (`no_nested_layouts`), and a `value--`, `label--`, `title--`, `description--` or `text--` class that the plugin's Framework release does not have (`framework_classes_exist`), such as `value--medium`. TRMNL renders all three wrong or not at all and says nothing. The class lists come from each release's `plugins.css`; `rake framework:classes` refreshes them.
+- `trmnlp lint` reports a QR code image loaded from an external service, such as api.qrserver.com or quickchart.io/qr, in an `<img>` src or a CSS `url()` (`no_external_qr_codes`). TRMNL asks recipes to use the built-in `qr_code` Liquid filter.
+
+## 0.23.1
+
+- A transform that prints more than about 64 KB no longer hangs until its timeout in `trmnlp test` and `trmnlp serve`; its output is read while it runs.
+
+## 0.23.0
+
+- `TRMNLP::Poller#fetch_responses` is public: each polling url as TRMNL resolves it, with its live response. A tool can keep them as the mocks `trmnlp test` answers with.
+- `it_behaves_like 'a publishable recipe'` uses the group's `data`, so a webhook plugin's examples can draw from the merge variables it stores.
+- A static plugin with blank `static_data` renders with no data, as on TRMNL, instead of failing with "invalid JSON in static_data". A byte order mark before the JSON is skipped, as on TRMNL.
+
+## 0.22.1
+
+- The Docker image runs liquid 5.14 and selenium-webdriver 4.50, as TRMNL does. It had 5.13 and 4.48, so Liquid output could differ from TRMNL. Installs of the gem already took the newer versions.
+
+## 0.22.0
+
+- The `bin/trmnlp` script that `trmnlp init` writes takes the steps that run the Docker image from the image, once a day, so a fix to them reaches every plugin with the image. Before, each plugin kept its own copy, which changed only when `trmnlp init` ran again. A plugin made before this release gets the new script from `trmnlp init <its folder>`, answering `y` for `bin/trmnlp` only, once.
+
+## 0.21.0
+
+- The `bin/trmnlp` script that `trmnlp init` writes pulls a newer `trmnl/trmnlp` image once a day, so a Docker user stays on the latest release. Before, it ran whatever image was pulled first. The README shows how to install the script as `trmnlp` with Docker alone.
+- The `bin/trmnlp` script that `trmnlp init` writes runs every command in Docker as the gem would. It asked for a terminal it did not have on CI and in scripts (`the input device is not a TTY`), and published port 4567 for every command, so `lint` and `test` failed while `serve` ran and `serve --port` could not be reached. On Linux it runs as you, so snapshots and `_build` are not root's. A plugin's OAuth tokens and saved data are kept between runs, and `CI` and `TRMNL_API_KEY` reach trmnlp. Saved as `trmnlp` on the `PATH`, it no longer starts itself without end. An existing plugin gets the new script from `trmnlp init <its folder>`, answering `y` for `bin/trmnlp` only.
+- The README asks for Ruby >= 4.0 to install the gem, as the gem does. It said 3.4.
+- `trmnlp lint` reports a filter that neither Liquid nor trmnl-liquid defines (`no_unknown_filters`), such as a typo or a LiquidJS filter like `push`. TRMNL outputs the value unfiltered, and `serve` and `build` drew it the same way, so nothing showed the mistake.
+- The Docker image includes geckodriver, so it draws screens on arm64 Linux such as a Raspberry Pi. Selenium downloaded it on every run that draws a screen (`test`, `build`, `serve`), which took about half a second and failed with no network, and on arm64 without x86 emulation it could not download one at all (`Unable to obtain geckodriver`).
+- Every command checks RubyGems for a newer stable release, once a day, and suggests a Gem or Bundler update command on stderr; `trmnlp version` always asks. `--quiet` or `TRMNLP_NO_UPDATE_NOTIFIER=1` skips it, and network failures leave output and exit status unchanged.
+- `have_no_overflow(except: '.forecast')` and `screen.overflowing(except:)` leave out a box that hides content on purpose, and everything inside it.
+
+## 0.20.0
+
+- `trmnlp lint` skips the rules listed under `ignored_lint_rules` in `.trmnlp.yml`, in text and JSON output alike. An unknown rule ID is an error that lists the known ones.
+- `trmnlp lint`, `build` and `serve` accept the `hidden` field type, which TRMNL renders as a hidden input. They warned "unknown field_type: hidden".
+- The README lists `trmnlp test` under Commands, and the guide to testing plugins moved to `docs/testing.md`, with how to share setup through `tests/spec_helper.rb`.
+- `trmnlp test`: `have_qr_code` on an element wholly off the left or top of the screen finds no code. It scanned part of the screen instead, because ImageMagick reads a crop 0 pixels wide as the whole width.
+- `it_behaves_like 'a publishable recipe'` no longer checks overflow. `have_no_overflow` flags text cut short on purpose (`text-overflow: ellipsis`, `-webkit-line-clamp`) on most list and calendar recipes, so authors filtered it out; the matcher stays for examples that call it.
+- `have_no_overflow` passes text cut short on purpose (`text-overflow: ellipsis`, `-webkit-line-clamp`) and text whose font is taller than its line, when only the empty space below it is cut. It reports a box only when a child box or a glyph's ink crosses its edge, so cut descenders still fail, and it now reports a scrolling box (`overflow: auto` or `scroll`) whose content is cut.
+- `have_no_problems` ignores Firefox's "ResizeObserver loop completed with undelivered notifications", which it raises when a ResizeObserver resizes what it observes, as FullCalendar does. Browsers report it as a page error, but nothing is broken.
+- `it_behaves_like 'a publishable recipe'` also uses the group's `variables` (for Plugin Merge recipes) and `now` when the group defines them. It passed only `mocks` and `custom_fields`, so such a recipe was drawn without its variables and on the real clock.
+- `trmnlp test`: under `now:`, the page's clock starts at `now:` when the page runs. It started seconds late, by however long Firefox took to load the page. `Date()` without `new` no longer throws, and `Intl.DateTimeFormat#format` and `#formatToParts` given no date use `now:`.
+- `trmnlp test --report` writes a report per process under parallel_tests (`report`, `report2`, ...) instead of each process overwriting the last. The README shows how to run a plugin's tests in parallel.
+- `serve`, `build` and `test` skip resizing the page when it is already the size asked for, and check a resize every 0.01 s instead of 0.1 s. About 0.04 s faster a render.
+- The bundled list of Framework versions goes up to 3.4.0, so offline, `trmnlp build` and `serve` no longer warn that a plugin pinned to 3.3.0 or later is not a published version. A release refreshes the list before it builds the gem.
+- The `qr_code` filter draws a white border four modules wide inside the code's box, so it scans in dark mode and on a dark page. The box keeps its size and the modules shrink to make room.
+- `trmnlp test`: `data:` reaches a static plugin. It was ignored there, so the test rendered the `static_data` in `settings.yml`.
+- `trmnlp test` takes a screen's PNG only when a test asks for it (`match_snapshot`, `fit_image_size_limit`, `png_path`, `--report`). A test that only reads the page no longer waits for the screenshot and its quantizing, about 0.15 seconds a render. The picture is of the page when it is first asked for, so a page changed with `evaluate` before `match_snapshot` is drawn changed.
+- `trmnlp test` opens each page from a local address instead of writing it into `about:blank` with its stylesheets inlined, so Firefox parses the Framework's 15 MB stylesheet once for the run: 10 renders take 5.5 seconds where they took 10.1, and trmnlp's own suite 89 seconds where it took 114. The page still gets no storage, cookies or `Referer`, as on TRMNL. Its `location` and the `Origin` of its cross-origin requests are `http://127.0.0.1:<port>`, and a relative URL is not found. (#193)
+- Every screenshot is 0.1 to 0.2 s faster, in `test`, `build` and `serve`. Stopping the page's timers before the capture cleared 100,000 timer ids one by one; it now clears only the ids the page has used.
+- A font file that never arrives no longer hangs a render until WebDriver's 30 second limit (`Selenium::WebDriver::Error::ScriptTimeoutError: Timed out after 30000 ms`), in `test`, `build` and `serve`. The page is given 10 seconds for its fonts, loaded once more, and then fails with the names of the fonts still loading.
+- `have_qr_code` checks that a QR code scans in a screen's PNG, and with a String or Regexp what it reads; `within:` scans one element and `screen.qr_codes` lists every text. It uses zbar, which the Docker image now includes.
+
+## 0.19.0
+
+- `it_behaves_like 'a publishable recipe'` also checks every screen for leaked values (`undefined`, `NaN`, `null`, `[object Object]`, `Liquid error`, raw `{{` or `{%`), draws the full view when the API answers with nothing, answers 500 or cannot be reached, and draws it with each option of every select field. New matchers: `have_no_leaked_text` and `have_no_transform_error`. (#181)
+
+## 0.18.1
+
+- Pages narrower than a Firefox window render, such as a 480x800 TRMNL OG in portrait, in `serve`, `build` and `test`. trmnlp sets the page's viewport with WebDriver BiDi, as TRMNL does, instead of resizing the window, which Firefox will not size under about 500px. (#178)
+- `it_behaves_like 'a publishable recipe'` also draws every view on the TRMNL OG (2-bit) in portrait. (#179)
+
+## 0.18.0
+
+- `it_behaves_like 'a publishable recipe'` checks what a recipe should hold before it is published: every view draws without overflow or page errors on the TRMNL OG (1-bit and 2-bit) and the TRMNL X (landscape and portrait), and the transform runs without error within TRMNL's limits. `trmnlp init`'s starter spec uses it. (#176)
+
+## 0.17.2
+
+- `trmnlp test` no longer inlines a stylesheet link inside a script's string, such as a CDN fallback written with `document.write`. It broke the script, and every render came out blank. (#174)
+
+## 0.17.1
+
+- `trmnlp test --report` writes its images readable by everyone, and `--update` its snapshots. They kept the 0600 mode of the screen's temp file, so under the `trmnl/trmnlp` image, which runs as root, the init workflow could not upload the report. (#171)
+- Capybara's matchers compose with `.and` and `.or` in a plugin's tests. (#172)
+
+## 0.17.0
+
+- `trmnlp init` adds a starter `tests/plugin_spec.rb`, and its GitHub workflow gains a `test` job: `trmnlp test --report` in the `trmnl/trmnlp` image (one `TRMNLP_IMAGE` setting picks the tag), the report uploaded, a manual `update_snapshots` run, and the push to TRMNL waiting for lint and tests. (#168)
+- `trmnlp test --report DIR` writes a report of the run: every example with each screen it rendered (the PNG, an outline of every drawn box, the page's problems) and each transform it ran (time, memory, requests), as `DIR/index.html` and `DIR/report.json`. Under GitHub Actions it adds the counts and the failures to the run's summary. (#167)
+- A polling plugin with no polling url runs its transform on empty data, as TRMNL does, instead of warning "config must specify polling_url" and counting it as a failed fetch, which stopped the transform's state being saved. A plugin whose transform fetches everything itself has no polling url. (#166)
+- `trmnlp test` runs a plugin's RSpec files in `tests/` through trmnlp's own pipeline: `trmnl.transform` and `trmnl.render` with fake APIs (the transform's own HTTPS requests included, in any language), a fixed clock (libfaketime, macOS and Linux), saved state, any TRMNL device, Capybara's matchers on what Firefox drew, layout boxes, overflow checks and PNG snapshots. See the README's Testing Plugins section. (#165)
+- A responsive `qr_code` keeps its own size, as on TRMNL. The hosted service gives the SVG a width, a height and `max-width:100%;height:auto` (core's `trmnl_liquid_qr_code_intrinsic_size` initializer), and trmnlp now does the same. Without it, a code in a shrink-to-fit container such as a `flex flex--col` column shrank to the width of its neighbors, or to nothing. (#162)
+- The Framework script loads as a module, as on TRMNL. A module runs after the page is parsed, so a plugin script that calls the Framework straight away now fails locally the way it fails on the device, instead of only on the device. (#163)
+- A transform's `trmnl_state` is not saved when the poll before it failed, as on TRMNL: a state built from an error or an empty response would replace the last good one. The key is still kept out of the rendered data. (#163)
+
+## 0.16.0
+
+- Webhook posts must wrap their data in `merge_variables`, as TRMNL requires, and `merge_strategy` (`replace`, `deep_merge`, or `stream` with `stream_limit`) works from the body or the query string. A post without the wrapper is refused with TRMNL's message and a 422; a body that is not JSON gets a 400. Before, trmnlp stored the raw body and always answered 200, so a correct post rendered its data under `merge_variables.*`. A post over 5 kB is stored with a warning, since trmnlp cannot know your plan's limit. (#155)
+- Polled and posted data is cached per project, so two plugins no longer share one `data.json`. Data cached by an older trmnlp is not read: a polling plugin polls again on start, and a webhook plugin needs one new post. (#155)
+- A webhook plugin with a transform runs it once, when a post arrives, and stores the result, as TRMNL does; renders no longer run it. A transform's `trmnl_state` comes back as `trmnl.state` on its next run and in the markup, and `trmnl.previous_merge_variables` carries what the last run stored. (#155)
+- `trmnl.plugin_settings` carries the plugin's name as `instance_name`, plus `no_screen_padding` and `data_fetched_utc`; `polling_url` appears only for a polling plugin and is the unrendered url; `polling_headers` is gone. `trmnl.device` carries `orientation` from the picker. The `trmnl` namespace now wins over a `trmnl` key in fetched data, as on TRMNL. (#155, #158)
+- `dark_mode: 'yes'` darkens every render, `trmnlp build` and PNGs included, and a dark render gets the bare `dark-mode` class Framework 1.x inverts on. The default font class is `screen--fonts-trmnl`, the picker's `screen--1x` is dropped, and a theme select adds `screen--theme-*` with the theme's stylesheet on Framework 3.2.0 and later. `window.I18n.andXMore` uses the user's locale. (#155)
+- A select custom field saves what TRMNL saves: "New York" as `new_york`, a `{ Label: value }` option as its value. The editor saved the label, so `{% if units == "metric" %}` matched only on TRMNL. A label already in `.trmnlp.yml` is read as its value. (#158)
+- A custom field's `default` fills a blank value, in the markup and in the polling url, headers and body, and a custom field set to `{{ env.X }}` in `.trmnlp.yml` reaches the markup filled in, as it already did for polling. Polling is skipped with TRMNL's "Plugin is not configured" message while a field the url needs is blank. (#158)
+- Polling follows TRMNL: the url, headers and body render with the `trmnl` namespace; urls split on CR or LF and drop blank lines; a GET sends the polling body as its query string; up to 5 redirects are followed, dropping `Authorization` when the host changes; reads time out after 10 s with one retry; a 429 or 5xx is a failed fetch while a 4xx body still renders; CSV, markdown, a byte order mark and an unlisted content type parse as on TRMNL. A url that resolves to a private address gets a warning, since TRMNL refuses it, but is still fetched. Logs and warnings leave out the query string, which often holds an api key. (#158)
+- Merge variables over 100 kB fail the render with TRMNL's message. A transform stops after 5 s, gets `trmnl.oauth` when an account is connected, keeps the last good output when it fails, and renders nothing from an output that is not an object. (#158)
+- `l_word`, `l_date`, `pluralize` and `number_to_currency` render as on TRMNL in its 29 locales: `pluralize` gave "3 persons", `number_to_currency: "de"` gave `de1,234.50`, and any non-English `l_word` or `l_date` raised. The locale data is copied from trmnl-i18n and rails-i18n into `db/data/locales` by `rake i18n:sync`, so trmnlp needs no Rails gems. (#156)
+- PNG renders follow TRMNL's renderer: a page dithers only when it asks for it with `image-dither`, otherwise it is posterized with TRMNL's ImageMagick steps, and the capture waits for the Framework's ready signals (up to 5 s, 12 s with a map). Highcharts charts rendered blank, since the unversioned CDN url refuses a page with no Referer; they now load TRMNL's 12.3.0 copy. Text is no longer drawn with antialiasing turned off, which brings it closer to TRMNL's own PNGs. (#157)
+- The `async_polling` strategy works locally: `{{ callback_url }}` points at the preview server, and the callback answers as TRMNL does, 410 for a stale or expired request. The `plugin_merge` strategy works too: list each referenced plugin as `<keyname>_<id>: <path to its trmnlp project>` under `merged_plugins` in `.trmnlp.yml`, and the markup gets TRMNL's merged data. (#160)
+- `trmnlp lint` reports a filter that only `custom_filters` in `.trmnlp.yml` defines (`no_custom_filters`). TRMNL does not load those modules and outputs the value unfiltered. (#159)
+
+## 0.15.0
+
+- `trmnlp lint` names where each finding is: a rule ID such as `[no_opacity]`, then the file, line and column with the source line. Before, it printed only the message, so you had to search every view and Shared for the cause. `trmnlp lint --format json` writes the same report as one JSON object (`version`, `passed`, `issues`) for CI. Exit statuses are unchanged, and the values of unused custom fields in `.trmnlp.yml` are never printed. (#153)
+- The inline-style check counts real CSS declarations in `style` attributes, still with a limit of six. It counted eight property names anywhere in the markup, so `font-size` in an HTML comment or a `<style>` block failed while seven `style="color:red"` passed. Comments, scripts, text and `<style>` blocks no longer count, and declarations inside Liquid `{% if %}` branches all count. (#152)
+
+## 0.14.2
+
+- A failed transform prints its stderr once. The `transform failed:` line repeated the whole stack trace that the `transform stderr:` line had just printed; it now names only the exit code. The preview page still shows the full error. (#148)
+- When a polling URL answers 401 and an OAuth account is connected, trmnlp refreshes the token and polls once more, as the hosted service does. Before, it refreshed only once the stored expiry had passed, so a token the provider revoked early kept failing until you reconnected. (#150)
+- A polling response that is not a 200 still reaches the markup and the transform, as on the hosted service, with a warning for a status outside 2xx. trmnlp replaced it with `{}`, so a transform that follows a 202 "pending job" body (`job_id`, `poll`) got nothing locally. (#146)
+- `trmnlp lint` reports bracketed Framework classes the Framework never generates, such as `w--[192px]` (sizes stop at 128px), `gap--[60px]` and `rounded--[51px]` (both stop at 50px), `h--[6cqw]` (height takes `cqh`) and, from 3.2.0, a screen-prefixed `md:gap--[20px]`. They match no CSS rule, so they do nothing: a flag sized `lg:w--[192px]` stayed at its smaller width on the X with no warning. The ranges are checked against every 3.x `plugins.css`, and plugins on Framework 2 or earlier are skipped, since v2 generated wider sizes. (#149)
+
+## 0.14.1
+
+- `trmnlp lint` reports a `recipe_overview` under 100 words. Below that, TRMNL serves the public recipe page with `robots: noindex`, so the recipe never appears in Google or other search engines, and nothing said so: the page looked fine, and only its HTML gave it away. A blank overview still passes, since private plugins have none. (#144)
+
+## 0.14.0
+
+- `trmnlp serve` and `build` print what the transform writes to stdout and stderr (`console.log`, `print`, `puts`), one `transform stdout:` / `transform stderr:` line each, so a transform can be debugged without returning its logs in the data. (#128)
+- The OAuth token exchange and refresh honor `oauth_token_request_auth_method` the way the hosted service does: HTTP Basic only for `header`, otherwise the client credentials go in the request body. trmnlp used HTTP Basic whenever a client secret was set, so a provider that wants the credentials in the body rejected the callback with `invalid_client: client_id is required`. A plugin that relied on HTTP Basic locally sets `oauth_token_request_auth_method: header`, which the hosted service already needs. (#121)
+- `polling_headers` are parsed the way the hosted service parses them: one header per line, `Name: Value` as well as `Name=Value`, a JSON object, and values that contain `=`. Before, trmnlp split only on `&`, so headers saved one per line made the whole poll fail with "cannot include CR/LF" and the markup and transform got no polled data (no `IDX_0`/`IDX_1`). (#127)
+- `trmnlp lint` no longer reports a custom field as unused when only the serverless transform (`src/transform.{py,rb,php,js}`) reads it. Plugins that move their data handling into the transform, reading fields from `input["trmnl"]["plugin_settings"]["custom_fields_values"]`, got one "is not used in form fields or markup" warning per field. The check now searches the transform as well, and its message names it. (#136)
+
+## 0.13.2
+
+- `google_photos_picker`, `json`, `modal_trigger` and `oauth_provider_select` are known form field types, so `trmnlp lint`, `build` and `serve` no longer warn "unknown field_type" for them. The hosted service renders all four. (#137)
+- The README documents `recipe_overview:` in `src/settings.yml`, the recipe page text that `trmnlp push` and `pull` already carry. (#138)
+
+## 0.13.1
+
+- `lat_lon` is a known form field type, so `trmnlp lint`, `build` and `serve` no longer warn "unknown field_type: lat_lon" for a location field. The vendored list in `db/data/form_fields.yml` predated the hosted service adding it. (#129)
+
+## 0.13.0
+
+- `trmnlp login` now accepts the scoped API keys trmnl.com issues with a `trmnl_` prefix, as well as `user_` account keys. It used to refuse them with "Invalid API key; did you copy it from the right place?" before checking them with the server. A scoped key needs the profile capability to log in, read to list and pull, and content to push. With delete as well, a failed first push removes the plugin it created. (#132)
+- The local preview now fills the `trmnl` fields the hosted service added: `trmnl.device.model`, `bit_depth`, `firmware_version`, `refresh_interval_seconds`, `sleep_mode_enabled`, `sleep_start_time` and `sleep_end_time`, and `trmnl.plugin_settings.refresh_interval_minutes`. The model and bit depth follow the device picker, with `og_plus` and 2 when nothing is picked. (#131)
+
+## 0.12.0
+
+- `required_ruby_version` is now `>= 4.0`, matching the Ruby version trmnlp actually needs. It has understated the real floor since 0.4.0: both `xdg` (Ruby 4.0 in the 10.x series pinned since 0.8.0) and `trmnl-liquid` (Ruby 4.0 since 0.5.0) require more than the gemspec claimed. RubyGems resolves against the declared value, so `gem install trmnl_preview` on an older Ruby did not fail. It quietly walked backwards to the newest version whose dependency tree resolved, reporting "Successfully installed" for a build up to twenty months old. On Ruby 3.4 that was 0.7.1, and on Ruby 3.3 and below it was 0.3.2, which predates the Thor CLI and offers only `serve`, `build` and `version`. Asking for the current version explicitly (`gem install trmnl_preview -v 0.11.0`) crashed RubyGems inside its own conflict reporting rather than explaining the problem. Installing on an unsupported Ruby now stops with "requires Ruby version >= 4.0".
+- Dependencies updated to their current releases. `trmnl-liquid` moves from 0.7.0 to 0.8.2, the only pin that excluded a newer release; every other dependency already resolved to its newest version on a fresh install. The two trmnl-liquid versions ship identical code and identical dependencies, so rendering is unchanged.
+
 ## 0.11.0
 
 - `framework_version:` now resolves against the release manifest published by the design system, not only the version list shipped inside the gem, so a framework version released after your trmnlp install can be pinned without upgrading. The manifest is read once per run with a 2 second timeout. If the request fails, or the response is not a version list, the copy bundled in the gem is used and rendering continues. That bundled copy is refreshed here too: `latest` moves from 3.1.1 to 3.2.0.

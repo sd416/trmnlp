@@ -11,9 +11,8 @@ RSpec.describe TRMNLP::FirefoxDriver do
       expect(options.args).to include('--headless', '--disable-web-security')
     end
 
-    it 'disables subpixel antialiasing so 1-bit quantization stays clean' do
-      expect(options.prefs).to include('gfx.text.disable-aa' => true,
-                                       'gfx.text.subpixel-position.force-disabled' => true)
+    it 'opens a WebDriver BiDi connection, which sets viewports narrower than a window can be' do
+      expect(options.web_socket_url).to be(true)
     end
   end
 end

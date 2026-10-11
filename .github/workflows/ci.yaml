@@ -4,12 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   specs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -18,24 +19,24 @@ jobs:
 
       # The transform-backend specs run real node/python/php subprocesses,
       # so the runtimes are declared here rather than relied on implicitly.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
-      - name: Install PHP CLI
-        run: sudo apt-get update && sudo apt-get install -y php-cli
+      - name: Install PHP CLI, libfaketime, ImageMagick and zbar
+        run: sudo apt-get update && sudo apt-get install -y php-cli libfaketime imagemagick zbar-tools
 
       - name: Run specs
-        run: bundle exec rspec
+        run: bundle exec rspec --profile 10
 
   rubocop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -48,13 +49,13 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Get Ruby version
         run: echo "RUBY_VERSION=$(cat .ruby-version)" >> "$GITHUB_ENV"
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: RUBY_VERSION=${{ env.RUBY_VERSION }}
@@ -64,3 +65,9 @@ jobs:
 
       - name: Smoke-test the image starts
         run: docker run --rm trmnlp:ci help
+
+      # With no geckodriver in the image, Selenium downloads one on every run, and this fails.
+      - name: Check Firefox starts on the image's geckodriver, with no network to download one
+        run: >
+          docker run --rm --network none --entrypoint ruby trmnlp:ci
+          -r/app/lib/trmnlp/firefox_driver -e 'TRMNLP::FirefoxDriver.build.quit'

@@ -10,6 +10,30 @@ RSpec.describe TRMNLP::Config::Project do
   let(:paths) { TRMNLP::Paths.new(root_dir) }
 
   describe '#custom_fields' do
+    context 'with overrides' do
+      subject(:project) { described_class.new(paths, overrides:) }
+
+      let(:overrides) { { 'custom_fields' => { 'character_name' => 'Bingo' } } }
+
+      it 'replaces those keys of .trmnlp.yml, so a test sees none of its development values' do
+        expect(project.custom_fields).to eq('character_name' => 'Bingo')
+      end
+
+      context 'when they name another key' do
+        let(:overrides) { { 'variables' => { 'greeting' => 'hi' } } }
+
+        it 'keeps the keys they do not name' do
+          expect(project.custom_fields).to include('character_name' => 'Bluey')
+        end
+      end
+
+      it 'keeps them across a reload' do
+        project.reload!
+
+        expect(project.custom_fields).to include('character_name' => 'Bingo')
+      end
+    end
+
     it 'transforms scalar values to strings' do
       expect(project.custom_fields).to include('character_name' => 'Bluey', 'character_age' => '7')
     end
@@ -23,18 +47,19 @@ RSpec.describe TRMNLP::Config::Project do
     end
 
     it 'recursively stringifies nested array and hash values' do
-      project.instance_variable_set(:@config, {
+      config = {
         'custom_fields' => {
           'nested' => {
             'items' => [1, { 'value' => 2 }, [3, 4]],
             'enabled' => true
           }
         }
-      })
+      }
+      project.instance_variable_set(:@config, config)
 
       expect(project.custom_fields).to include(
         'nested' => {
-          'items' => ['1', { 'value' => '2' }, ['3', '4']],
+          'items' => ['1', { 'value' => '2' }, %w[3 4]],
           'enabled' => 'true'
         }
       )
@@ -50,16 +75,26 @@ RSpec.describe TRMNLP::Config::Project do
   end
 
   describe '#with_custom_fields' do
-    before { project.instance_variable_set(:@config, { 'custom_fields' => { 'city' => 'Perth' } }) }
-
     it 'renders custom field values' do
-      expect(project.with_custom_fields('in {{ city }}')).to eq('in Perth')
+      expect(project.with_custom_fields('in {{ city }}', values: { 'city' => 'Perth' })).to eq('in Perth')
     end
 
     it 'merges extra variables into the render context' do
       rendered = project.with_custom_fields('Bearer {{ oauth_access_token }}',
-                                            extra_variables: { 'oauth_access_token' => 'AT' })
+                                            values: {}, extra_variables: { 'oauth_access_token' => 'AT' })
       expect(rendered).to eq('Bearer AT')
+    end
+  end
+
+  describe '#user_filter_modules' do
+    it 'loads each module listed under custom_filters' do
+      Dir.mktmpdir('trmnlp-project-') do |dir|
+        File.write(File.join(dir, 'filters.rb'), "module TrmnlpSpecShoutFilter\n  def shout(input) = input\nend\n")
+        File.write(File.join(dir, '.trmnlp.yml'), "custom_filters:\n  TrmnlpSpecShoutFilter: filters.rb\n")
+
+        expect(described_class.new(TRMNLP::Paths.new(dir)).user_filter_modules.map(&:name))
+          .to eq(%w[TrmnlpSpecShoutFilter])
+      end
     end
   end
 

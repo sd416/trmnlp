@@ -10,34 +10,39 @@ RSpec.describe TRMNLP::Screenshot do
   let(:pool) { FakePool.new(driver) }
 
   class FakeDriver
-    attr_reader :scripts_run, :window_size, :screenshot_path, :navigated_to, :size_set_count
-    attr_accessor :script_errors, :viewport_overrides, :min_window_width
+    attr_reader :scripts_run, :viewport_set, :screenshot_path, :navigated_to, :viewport_set_count
+    attr_accessor :script_errors, :viewport_overrides, :readiness_answers, :fonts_load_on_attempt
 
     def initialize
       @scripts_run = []
       @navigated_to = []
       @script_errors = []
       @viewport_overrides = []
-      @size_set_count = 0
-      @min_window_width = nil
+      @viewport_set_count = 0
+      @readiness_answers = []
+      @fonts_load_on_attempt = 1
     end
 
     def execute_script(script, *_args)
       raise @script_errors.shift if @script_errors.any?
 
       @scripts_run << script
-      return { 'width' => 10, 'height' => 20 } if script.include?('outerWidth')
       return next_viewport if script.include?('innerWidth')
+      # A page's fonts arrive on the nth time it is loaded; a stalled font file never does.
+      return @navigated_to.size >= @fonts_load_on_attempt if script.include?('document.fonts.status')
+      return ['Inter'] if script.include?("font.status === 'loading'")
 
-      'complete' if script.include?('readyState')
+      @readiness_answers.empty? || @readiness_answers.shift if script.include?('TRMNL_PLUGINS_READY')
     end
 
-    def manage = self
-    def window = self
+    def bidi = self
+    def window_handle = 'context-1'
 
-    def size=(dim)
-      @size_set_count += 1
-      @window_size = dim
+    def send_cmd(command, context:, viewport:)
+      raise ArgumentError, command unless command == 'browsingContext.setViewport' && context == 'context-1'
+
+      @viewport_set_count += 1
+      @viewport_set = viewport
     end
 
     def navigate = NavigateFake.new(self)
@@ -45,16 +50,11 @@ RSpec.describe TRMNLP::Screenshot do
 
     private
 
-    # A real browser's viewport is the window minus the chrome borders
-    # (10x20 above). Queue `viewport_overrides` to simulate a cold Firefox
-    # reporting a not-yet-settled size before the resize lands. Set
-    # `min_window_width` to simulate Firefox refusing to shrink its window
-    # below a minimum (clamping the viewport wider than requested).
+    # Queue `viewport_overrides` for a cold Firefox reporting a size before the new viewport lands.
     def next_viewport
       return @viewport_overrides.shift if @viewport_overrides.any?
 
-      effective_width = [@window_size.width, @min_window_width || 0].max
-      [effective_width - 10, @window_size.height - 20]
+      @viewport_set&.values_at(:width, :height)
     end
   end
 
@@ -88,16 +88,20 @@ RSpec.describe TRMNLP::Screenshot do
       expect(driver.screenshot_path).to eq(result.path)
     end
 
-    it 'resizes the driver window to width+borders by height+borders' do
+    it 'sets the viewport to the requested size through WebDriver BiDi' do
       result
-      expect(driver.window_size.width).to eq(810)
-      expect(driver.window_size.height).to eq(500)
+      expect(driver.viewport_set).to eq(width: 800, height: 480)
     end
 
-    it 're-applies the window size until the viewport reports the requested dimensions' do
-      driver.viewport_overrides = [[800, 433], [800, 433]]
+    it 're-applies the viewport until the page reports the requested dimensions' do
+      driver.viewport_overrides = [[400, 240], [800, 433], [800, 433]]
       result
-      expect(driver.size_set_count).to eq(3)
+      expect(driver.viewport_set_count).to eq(3)
+    end
+
+    it 'does not set the viewport again for a second render at the same size' do
+      2.times { screenshot.call(html: '<p>hi</p>', width: 800, height: 480) }
+      expect(driver.viewport_set_count).to eq(1)
     end
 
     it 'navigates to about:blank before loading the page' do
@@ -116,12 +120,69 @@ RSpec.describe TRMNLP::Screenshot do
       expect { result }.to raise_error(Selenium::WebDriver::Error::WebDriverError)
     end
 
-    context 'when the browser clamps the window below the requested width' do
+    it 'polls until the page signals TRMNL readiness' do
+      driver.readiness_answers = [false, false, true]
+      result
+      expect(driver.scripts_run.count { |script| script.include?('TRMNL_PLUGINS_READY') }).to eq(3)
+    end
+
+    it 'freezes timers as the last step before capture' do
+      result
+      expect(driver.scripts_run.last).to include('requestAnimationFrame')
+    end
+
+    context 'when the page never signals readiness' do
+      before do
+        stub_const("#{described_class}::READINESS_TIMEOUT_SECONDS", 0.1)
+        driver.readiness_answers = Array.new(1000, false)
+      end
+
+      it 'captures anyway' do
+        expect(result.path).to eq(driver.screenshot_path)
+      end
+    end
+
+    context 'when a font file stalls' do
+      subject(:screenshot) { described_class.new(pool:, fonts_timeout: 0.1) }
+
+      before { driver.fonts_load_on_attempt = 2 }
+
+      it 'loads the page once more, and captures it' do
+        expect([result.path, driver.navigated_to.size]).to eq([driver.screenshot_path, 2])
+      end
+    end
+
+    context 'when the fonts never load' do
+      subject(:screenshot) { described_class.new(pool:, fonts_timeout: 0.1) }
+
+      before { driver.fonts_load_on_attempt = 1000 }
+
+      it 'raises a RenderError naming them, after loading the page twice' do
+        expect { result }.to raise_error(TRMNLP::RenderError, /fonts did not load within 0.1s: Inter/)
+      end
+
+      it 'does not start over with another browser' do
+        expect { result }.to raise_error(TRMNLP::RenderError)
+          .and change(pool, :yield_count).to(1)
+          .and change { driver.navigated_to.size }.to(2)
+      end
+    end
+
+    context 'when the page draws a map' do
+      before { allow(Selenium::WebDriver::Wait).to receive(:new).and_call_original }
+
+      it 'waits up to the longer maps readiness timeout' do
+        screenshot.call(html: '<script>TRMNLMaps.create()</script>', width: 800, height: 480)
+        expect(Selenium::WebDriver::Wait).to have_received(:new).with(hash_including(timeout: 12))
+      end
+    end
+
+    context 'when the viewport never reaches the requested size' do
       subject(:screenshot) { described_class.new(pool:, viewport_timeout: 0.1) }
 
-      before { driver.min_window_width = 510 }
+      before { driver.viewport_overrides = Array.new(1000, [500, 240]) }
 
-      it 'raises a RenderError naming the requested and clamped sizes' do
+      it 'raises a RenderError naming the requested and actual sizes' do
         expect { screenshot.call(html: '<p>hi</p>', width: 400, height: 240) }
           .to raise_error(TRMNLP::RenderError, /400x240.+500x240/)
       end

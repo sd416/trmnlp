@@ -13,14 +13,18 @@ The server watches the filesystem for changes to the Liquid templates, seamlessl
 
 ## Quick Start
 
+With [Docker](https://docs.docker.com/get-docker/) installed:
+
 ```sh
-gem install trmnl_preview     # install
+mkdir -p ~/.local/bin         # install
+docker run --rm --entrypoint cat trmnl/trmnlp /app/templates/init/bin/trmnlp > ~/.local/bin/trmnlp
+chmod +x ~/.local/bin/trmnlp
 trmnlp init my_plugin         # scaffold a project
 cd my_plugin
 trmnlp serve                  # preview at http://localhost:4567
 ```
 
-No Ruby on hand? Run it through Docker instead — see [Installing via Docker](#installing-via-docker).
+Have Ruby 4.0 or newer? `gem install trmnl_preview` starts faster — see [Installing via RubyGems](#installing-via-rubygems).
 
 ## Project Structure
 
@@ -88,6 +92,7 @@ trmnlp push                    # upload
 | `trmnlp serve` | Start a local dev server |
 | `trmnlp build` | Generate static HTML files, or PNGs with `--png` |
 | `trmnlp lint` | Check plugin code against TRMNL best practices |
+| `trmnlp test` | Run the plugin's tests in `tests/` |
 | `trmnlp login` | Authenticate with TRMNL server |
 | `trmnlp list` | List private plugins from TRMNL server |
 | `trmnlp clone NAME ID` | Copy a plugin project from TRMNL server |
@@ -96,6 +101,47 @@ trmnlp push                    # upload
 | `trmnlp version` | Show version |
 
 `trmnlp lint` exits non-zero when it finds issues, so you can gate CI on it. Run `trmnlp help` for all flags.
+
+Every command also checks RubyGems for a newer stable `trmnl_preview` release
+and, when one is available, suggests `gem update trmnl_preview`, or
+`bundle update trmnl_preview` when run through Bundler. An exact Gemfile pin must
+be changed before Bundler can update it. Notices go to stderr, keeping lint JSON
+output and exit status unchanged. The answer is cached for a day, so most runs
+make no request; `trmnlp version` always asks RubyGems. `--quiet` or
+`TRMNLP_NO_UPDATE_NOTIFIER=1` skips the check. Connection and read timeouts are
+two seconds each; current versions and an unavailable registry stay silent. The
+check never installs an update or changes your Gemfile or lockfile. Inside Docker there is no
+check: the `bin/trmnlp` script pulls a newer image once a day instead.
+
+Lint findings include a stable snake_case rule ID, severity and source locations.
+Locations use project-relative paths and one-based line/column numbers, followed
+by a source excerpt (up to 240 characters). Aggregate checks show their contributing
+locations; checks for a missing chart setting show the related Highcharts usage.
+Unused project custom-field values are omitted from excerpts because they can
+contain credentials.
+
+For CI integrations, use `trmnlp lint --format json`. It writes one JSON object
+with `version: 1`, `passed` and an `issues` array. Each issue has `rule_id`,
+`severity`, `message`, `locations` and, when available, `learn_more`. Each location
+has `path`, `line`, `column` and `snippet`. A clean report has `passed: true` and
+`issues: []`. All existing checks retain severity `error` and the same exit status:
+zero when clean, nonzero when findings exist. `--quiet` suppresses either format.
+
+The inline-style check counts CSS declarations in actual HTML `style` attributes,
+with a limit of six across the view templates and Shared. All property names count,
+including custom properties. HTML/Liquid comments, script strings, text,
+`data-*` attributes and `<style>` blocks are excluded from this inline check.
+Liquid in declaration values is counted without rendering the plugin, every branch included.
+
+Filters from `custom_filters` in `.trmnlp.yml` exist only in trmnlp. TRMNL does not load them
+and outputs the value unfiltered, so `no_custom_filters` reports each place the markup uses one.
+Filters that trmnl-liquid also provides are not reported.
+A filter that neither Liquid nor trmnl-liquid defines, such as a typo or one from another
+Liquid (Jekyll, LiquidJS), is also output unfiltered on TRMNL, so `no_unknown_filters` reports it.
+
+To accept a rule's findings, list its rule ID under `ignored_lint_rules` in `.trmnlp.yml`.
+`trmnlp lint` then skips that check in both formats, so the CLI and CI agree. An unknown
+rule ID is an error that lists the known ones, so a typo does not pass quietly.
 
 ## Building Static Files
 
@@ -183,23 +229,24 @@ The `bin/trmnlp` script is provided as a convenience. It will use the local Ruby
 
 You can modify the `bin/trmnlp` script to set up environment variables (plugin secrets, etc.) before running the server.
 
-**Gem or Docker?** Install the gem if you already have Ruby >= 3.4 — it has the fastest startup. Use Docker for zero local setup.
-
-### Installing via RubyGems
-
-Prerequisites:
-
-- Ruby >= 3.4
-- For PNG rendering (optional):
-  - Firefox
-  - ImageMagick
-
-```sh
-gem install trmnl_preview
-trmnlp serve
-```
+**Docker or gem?** The Docker image has everything trmnlp needs, including Firefox and the tools `trmnlp test` uses. The gem starts a little faster, but needs Ruby 4.0 and those tools installed yourself.
 
 ### Installing via Docker
+
+To type `trmnlp` as with the gem, copy the script from the image onto your `PATH`:
+
+```sh
+mkdir -p ~/.local/bin
+docker run --rm --entrypoint cat trmnl/trmnlp /app/templates/init/bin/trmnlp > ~/.local/bin/trmnlp
+chmod +x ~/.local/bin/trmnlp
+```
+
+It runs each command in the image and pulls a newer image once a day. The steps that run the image
+come from the image too, so the script itself does not go out of date. To stay on one release, set
+`IMAGE` in the script to a tag such as `trmnl/trmnlp:v0.22.0` (v0.22.0 or later). `trmnlp init` puts
+the same script in each plugin as `bin/trmnlp`.
+
+Or run the image yourself:
 
 ```sh
 docker run \
@@ -269,6 +316,24 @@ cd trmnlp
 docker build -t trmnlp .
 ```
 
+### Installing via RubyGems
+
+Prerequisites:
+
+- Ruby >= 4.0
+- For PNG rendering and `trmnlp test`:
+  - Firefox
+  - ImageMagick 7
+- For some `trmnlp test` features ([Testing](docs/testing.md)):
+  - libfaketime, for a transform's clock with `now:`
+  - zbar, for `have_qr_code`
+- Node 24, Python or PHP, for a transform in that language
+
+```sh
+gem install trmnl_preview
+trmnlp serve
+```
+
 ## `.trmnlp.yml` Reference - Project Config
 
 The `.trmnlp.yml` file lives in the root of the plugin project, and is for configuring the local dev server.
@@ -312,7 +377,18 @@ variables:
     plugin_settings:
       instance_name: Kevin Bacon Facts
 
+# rule IDs whose findings `trmnlp lint` drops
+ignored_lint_rules:
+  - no_opacity
+
+# plugin_merge strategy: the plugins this one reads, as "<keyname>_<id>" on TRMNL,
+# each mapped to the trmnlp project whose last fetched data stands in for it
+merged_plugins:
+  private_plugin_42: ../weather
 ```
+
+An `async_polling` plugin gets `{{ callback_url }}` in its polling url. It points at
+`trmnlp serve`'s `/callback` route, where the API posts `merge_variables` after answering 202.
 
 ## OAuth2
 
@@ -332,6 +408,7 @@ oauth_scopes: "read:user user:email"
 oauth_pkce_enabled: "true"      # optional, default false
 # oauth_scope_separator: " "      # optional; some providers use ","
 # oauth_refresh_url: https://...  # optional; defaults to oauth_token_url
+# oauth_token_request_auth_method: header  # optional; "header" sends the client credentials as HTTP Basic, otherwise they go in the body
 ```
 
 Your OAuth app credentials stay local and are never synced, so set them in your environment:
@@ -431,8 +508,17 @@ The `settings.yml` file is part of the plugin definition, and is uploaded and do
 
 `description:` is an optional one-line summary of the plugin, up to 35 characters. `trmnlp lint` reports anything longer, and `trmnlp list` shows it next to each plugin name.
 
+`recipe_overview:` is optional free text for a published recipe, with no length limit. TRMNL shows it on the public recipe page with its line breaks kept, and its first 120 characters feed the page's link preview. An overview of at least 100 words lets the recipe appear in Google and other search engines; `trmnlp lint` reports one that is shorter. Put credits and links in an About This Plugin field instead. Leave the key out to keep the overview already on TRMNL; an empty value clears it.
+
+A recipe needs a custom field with `field_type: author_bio` that gives users a way to reach the author: an `email_address`, a `github_url`, a `learn_more_url`, or an email address or link in its `description`. `trmnlp lint` reports a recipe without one. A Discord link or handle alone is not enough, because not every user has access to Discord.
+
 See [TRMNL documentation](https://help.trmnl.com/en/articles/10542599-importing-and-exporting-private-plugins#h_581fb988f0) for details on this file's contents.
 
+
+
+## Testing Plugins
+
+`trmnlp test` runs the RSpec files in your plugin's `tests/` folder through the same pipeline `serve` and `build` use, with fake APIs and a fixed clock. `trmnlp init` starts a plugin with a test and a GitHub workflow that runs it. See [Testing Plugins](https://github.com/usetrmnl/trmnlp/blob/main/docs/testing.md) for the API, the matchers, snapshots and running tests in parallel.
 
 ## Development
 
@@ -471,6 +557,16 @@ To cut a release:
 3. Commit and merge to `main` — the workflow does the rest.
 
 By convention, add a matching `CHANGELOG.md` entry in the same change.
+
+## Related guides
+
+- [Private Plugins](https://help.trmnl.com/en/articles/9510536-private-plugins): strategies, polling and webhooks
+- [Liquid 101](https://help.trmnl.com/en/articles/10671186-liquid-101) and the [Framework Design Docs](https://help.trmnl.com/en/articles/12410486-framework-design-docs)
+- [Custom plugin form builder](https://help.trmnl.com/en/articles/10513740-custom-plugin-form-builder): the form fields `src/settings.yml` declares
+- [Syncing Plugins with GitHub](https://help.trmnl.com/en/articles/13465101-syncing-plugins-with-github) and [GitHub Sync](https://help.trmnl.com/en/articles/15977899-github-sync)
+- [Recipe best practices](https://help.trmnl.com/en/articles/11395668-recipe-best-practices) and [Demo Data for Publishing Plugins](https://help.trmnl.com/en/articles/12772238-demo-data-for-publishing-plugins)
+- [TRMNL CLI](https://help.trmnl.com/en/articles/17226209-trmnl-cli): the rest of your account from the terminal
+- [MCP Server](https://help.trmnl.com/en/articles/17432548-mcp-server) and our [agent skills](https://github.com/usetrmnl/trmnl-agent-skills): build plugins with an AI agent
 
 ## Contributing
 

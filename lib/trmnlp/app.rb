@@ -73,10 +73,9 @@ module TRMNLP
       end
     end
 
-    post '/webhook' do
-      @poller.put_webhook(request.body.read)
-      'OK'
-    end
+    post('/webhook') { halt_with_json(*@context.webhook_receiver.call(request.body.read, params.to_h)) }
+
+    post('/callback') { halt_with_json(*@context.async_callback.call(request.body.read, params['v'])) }
 
     get '/' do
       redirect '/full'
@@ -230,6 +229,8 @@ module TRMNLP
     end
 
     private
+
+    def halt_with_json(status_code, body) = halt(status_code, { 'content-type' => 'application/json' }, body.to_json)
 
     # Validates the incoming custom-fields payload, raising InvalidCustomFields
     # (reported to the user as a 400) on bad input. JSON.parse only yields

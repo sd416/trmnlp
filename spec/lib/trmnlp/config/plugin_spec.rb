@@ -19,6 +19,40 @@ RSpec.describe TRMNLP::Config::Plugin do
       end
     end
 
+    context 'with one header per line, as the hosted form saves them' do
+      before { plugin.instance_variable_set(:@config, { 'polling_headers' => "Accept=*/*\r\nAccept-Language=en-US" }) }
+
+      it 'splits on the line breaks' do
+        expect(plugin.polling_headers).to eq({ 'Accept' => '*/*', 'Accept-Language' => 'en-US' })
+      end
+    end
+
+    context 'with Name: Value headers' do
+      before { plugin.instance_variable_set(:@config, { 'polling_headers' => "Accept: */*\nReferer: https://a.test/?x=1" }) }
+
+      it 'splits each header on the colon' do
+        expect(plugin.polling_headers).to eq({ 'Accept' => '*/*', 'Referer' => 'https://a.test/?x=1' })
+      end
+    end
+
+    context 'with a JSON object' do
+      let(:json) { '{"Notion-Version": "2022-06-28", "X-Retries": 2}' }
+
+      before { plugin.instance_variable_set(:@config, { 'polling_headers' => json }) }
+
+      it 'answers its keys and values as strings' do
+        expect(plugin.polling_headers).to eq({ 'Notion-Version' => '2022-06-28', 'X-Retries' => '2' })
+      end
+    end
+
+    context 'with an = inside the value' do
+      before { plugin.instance_variable_set(:@config, { 'polling_headers' => 'Authorization=Basic dXNlcjpwYXNz==' }) }
+
+      it 'keeps the whole value' do
+        expect(plugin.polling_headers).to eq({ 'Authorization' => 'Basic dXNlcjpwYXNz==' })
+      end
+    end
+
     context 'with a Liquid conditional that spans the whole string' do
       before do
         config = { 'polling_headers' => '{% if character_name %}Greeting=hello {{ character_name }}{% endif %}' }
@@ -58,6 +92,122 @@ RSpec.describe TRMNLP::Config::Plugin do
     it 'injects extra variables into polling_body' do
       plugin.instance_variable_set(:@config, { 'polling_body' => 'token={{ oauth_access_token }}' })
       expect(plugin.polling_body(extra_variables: { 'oauth_access_token' => 'AT' })).to eq('token=AT')
+    end
+  end
+
+  describe '#polling_urls' do
+    before { plugin.instance_variable_set(:@config, { 'polling_url' => "https://a.test/1\r\n\n  https://a.test/2  \n" }) }
+
+    it 'reads one url per line, squished, without blank lines' do
+      expect(plugin.polling_urls).to eq(%w[https://a.test/1 https://a.test/2])
+    end
+  end
+
+  describe '#polling_url_text' do
+    before { plugin.instance_variable_set(:@config, { 'polling_url' => 'https://a.test/{{ city }}' }) }
+
+    it 'answers the url unrendered, as TRMNL exposes it to markup' do
+      expect(plugin.polling_url_text).to eq('https://a.test/{{ city }}')
+    end
+  end
+
+  describe '#custom_fields_values' do
+    let(:fields) do
+      [{ 'keyname' => 'city', 'default' => 'Paris' },
+       { 'keyname' => 'units', 'field_type' => 'select', 'options' => %w[Metric Imperial] }]
+    end
+
+    before { plugin.instance_variable_set(:@config, { 'custom_fields' => fields }) }
+
+    it 'fills a blank value with its default' do
+      allow(project_config).to receive(:custom_fields).and_return('city' => ' ')
+
+      expect(plugin.custom_fields_values['city']).to eq('Paris')
+    end
+
+    it 'fills a missing value with its default' do
+      allow(project_config).to receive(:custom_fields).and_return({})
+
+      expect(plugin.custom_fields_values).to eq('city' => 'Paris')
+    end
+
+    it 'keeps false as an answer' do
+      allow(project_config).to receive(:custom_fields).and_return('city' => 'false')
+
+      expect(plugin.custom_fields_values['city']).to eq('false')
+    end
+
+    it 'fills in an env value, which the markup and the polling url both see' do
+      allow(ENV).to receive(:to_h).and_return('ICAO' => 'KSFO')
+      allow(project_config).to receive(:custom_fields).and_return('station' => '{{ env.ICAO }}')
+
+      expect(plugin.custom_fields_values['station']).to eq('KSFO')
+    end
+
+    it "saves a select's label as its value" do
+      allow(project_config).to receive(:custom_fields).and_return('units' => 'Metric')
+
+      expect(plugin.custom_fields_values['units']).to eq('metric')
+    end
+  end
+
+  describe '#missing_required_fields' do
+    let(:fields) do
+      [{ 'keyname' => 'api_key' }, { 'keyname' => 'city' }, { 'keyname' => 'zip', 'optional' => true },
+       { 'keyname' => 'units', 'default' => 'si' }, { 'keyname' => 'debug', 'field_type' => 'boolean' }]
+    end
+    let(:url) do
+      'https://a.test/?key={{ api_key }}&city={{ city | default: "Paris" }}&zip={{ zip }}&u={{ units }}&d={{ debug }}'
+    end
+
+    before { plugin.instance_variable_set(:@config, { 'custom_fields' => fields, 'polling_url' => url }) }
+
+    it 'names a blank field the url needs without a default' do
+      allow(project_config).to receive(:custom_fields).and_return({})
+
+      expect(plugin.missing_required_fields).to eq(['api_key'])
+    end
+
+    it 'answers none once the field is filled in' do
+      allow(project_config).to receive(:custom_fields).and_return('api_key' => 'abc')
+
+      expect(plugin.missing_required_fields).to eq([])
+    end
+
+    it 'reads the full trmnl path to a field' do
+      url = 'https://a.test/{{ trmnl.plugin_settings.custom_fields_values.city }}'
+      plugin.instance_variable_set(:@config, { 'custom_fields' => fields, 'polling_url' => url })
+      allow(project_config).to receive(:custom_fields).and_return({})
+
+      expect(plugin.missing_required_fields).to eq(['city'])
+    end
+  end
+
+  describe '#static_data' do
+    before { plugin.instance_variable_set(:@config, { 'static_data' => static_data }) }
+
+    context 'when it is blank, as TRMNL saves a static plugin with no data' do
+      let(:static_data) { '  ' }
+
+      it 'is empty' do
+        expect(plugin.static_data).to eq({})
+      end
+    end
+
+    context 'when it starts with a byte order mark' do
+      let(:static_data) { "\uFEFF{\"city\": \"Lisbon\"}" }
+
+      it 'parses after it' do
+        expect(plugin.static_data).to eq('city' => 'Lisbon')
+      end
+    end
+
+    context 'when it is not JSON' do
+      let(:static_data) { '{city' }
+
+      it 'raises' do
+        expect { plugin.static_data }.to raise_error(TRMNLP::InvalidConfig, 'invalid JSON in static_data')
+      end
     end
   end
 

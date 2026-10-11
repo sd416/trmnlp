@@ -4,6 +4,8 @@ require 'thor'
 
 require_relative '../trmnlp'
 require_relative '../trmnlp/commands'
+require_relative 'paths'
+require_relative 'update_check'
 
 module TRMNLP
   class CLI < Thor
@@ -21,6 +23,23 @@ module TRMNLP
     # published ports, so we bind to all interfaces instead.
     def self.in_container? = File.exist?('/.dockerenv') || File.exist?('/run/.containerenv')
     def self.default_bind = in_container? ? '0.0.0.0' : '127.0.0.1'
+
+    no_commands do
+      # Thor routes every command through here, so the update notice covers
+      # them all without each command having to remember it. `version` runs
+      # its own fresh check after printing, and help has nothing to update.
+      def invoke_command(command, *)
+        check_for_update unless %w[help version].include?(command.name)
+        super
+      end
+
+      def check_for_update(fresh: false)
+        # In a container `gem update` does not apply; bin/trmnlp pulls a newer image instead.
+        return if options[:quiet] || UpdateCheck.disabled? || self.class.in_container?
+
+        UpdateCheck.new(Paths.new(options[:dir]).update_check).call(fresh:)
+      end
+    end
 
     desc 'build', 'Generate static HTML files'
     method_option :png, type: :boolean, default: false, desc: 'Also render a PNG per view'
@@ -72,6 +91,8 @@ module TRMNLP
     end
 
     desc 'lint', 'Check plugin code against TRMNL best practices'
+    method_option :format, type: :string, default: 'text', enum: %w[text json],
+                           desc: 'Report format (text or json)'
     def lint
       # Exit non-zero when issues are found so CI pipelines can gate on it.
       exit(1) unless Commands::Lint.run(options)
@@ -84,9 +105,21 @@ module TRMNLP
       Commands::Serve.run(options)
     end
 
+    desc 'test [PATHS]', "Run the plugin's tests in tests/ (RSpec, with `trmnl` and screen matchers)"
+    method_option :update, type: :boolean, default: false, desc: 'Rewrite the stored snapshots'
+    method_option :report, type: :string, banner: 'DIR', desc: 'Write a report of every screen and transform to DIR'
+    def test(*paths)
+      exit(1) unless Commands::Test.run(options, paths)
+    end
+
     desc 'version', 'Show version'
     def version
       puts VERSION
+      # Keep the version first when stdout is a pipe and stderr is not.
+      $stdout.flush
+      # On stderr, so a script that reads the version still gets the number alone.
+      warn "Running in Docker (#{ENV.fetch('TRMNLP_IMAGE', 'image unknown')})" if self.class.in_container?
+      check_for_update(fresh: true)
     end
   end
 end

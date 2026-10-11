@@ -7,8 +7,9 @@ module TRMNLP
   class Paths
     attr_reader :root_dir
 
-    def initialize(root_dir)
-      @root_dir = Pathname.new(root_dir)
+    def initialize(root_dir, cache_dir: nil)
+      @root_dir = Pathname.new(root_dir).expand_path
+      @cache_dir = cache_dir && Pathname.new(cache_dir)
       @xdg = XDG.new
     end
 
@@ -27,8 +28,7 @@ module TRMNLP
 
     def app_config_dir = xdg.config_home.join('trmnlp')
 
-    def cache_dir = xdg.cache_home.join('trmnl')
-    def create_cache_dir = cache_dir.mkpath
+    def cache_dir = @cache_dir || xdg.cache_home.join('trmnl')
 
     def valid? = trmnlp_config.exist?
 
@@ -44,11 +44,19 @@ module TRMNLP
 
     def app_config = app_config_dir.join('config.yml')
 
-    def user_data = cache_dir.join('data.json')
+    # Cached files are keyed per project root so working on two plugins does not
+    # clobber a shared file.
+    def user_data = cache_dir.join('data', "#{project_key}.json")
 
-    # OAuth tokens are keyed per project root so working on two OAuth plugins
-    # does not clobber a shared token file.
-    def oauth_tokens = cache_dir.join('oauth', "#{Digest::SHA256.hexdigest(root_dir.to_s)[0, 16]}.json")
+    def oauth_tokens = cache_dir.join('oauth', "#{project_key}.json")
+
+    def transform_state = cache_dir.join('state', "#{project_key}.json")
+    def fetch_failed_marker = cache_dir.join('state', "#{project_key}.fetch_failed")
+
+    def transform_output = cache_dir.join('transform_output', "#{project_key}.json")
+
+    # One file for every project: the published gem version is not per project.
+    def update_check = cache_dir.join('update_check.json')
 
     def render_template = Pathname.new(__dir__).join('..', '..', 'web', 'views', 'render_html.erb')
 
@@ -79,5 +87,7 @@ module TRMNLP
     private
 
     attr_reader :xdg
+
+    def project_key = Digest::SHA256.hexdigest(root_dir.to_s)[0, 16]
   end
 end

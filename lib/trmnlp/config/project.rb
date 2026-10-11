@@ -11,22 +11,24 @@ module TRMNLP
     class Project
       attr_reader :paths
 
-      def initialize(paths)
+      def initialize(paths, overrides: {})
         @paths = paths
+        @overrides = overrides
         reload!
       end
 
       def reload!
-        @config = if paths.trmnlp_config.exist?
-                    YAML.safe_load_file(paths.trmnlp_config, permitted_classes: [Date, Time]) || {}
-                  else
-                    {}
-                  end
+        @config = read_config.merge(@overrides)
       rescue Psych::SyntaxError => e
         raise InvalidConfig, ".trmnlp.yml is not valid YAML: #{e.message}"
       end
 
-      def user_filters = @config['custom_filters'] || []
+      def user_filter_modules
+        (@config['custom_filters'] || []).map do |module_name, relative_path|
+          require paths.root_dir.join(relative_path)
+          Object.const_get(module_name)
+        end
+      end
 
       def live_render? = !watch_paths.empty?
 
@@ -36,16 +38,23 @@ module TRMNLP
 
       def custom_fields = @config.fetch('custom_fields', {}).transform_values { |v| stringify_field_value(v) }
 
+      # Values with {{ env.X }} filled in, standing in for what a user types into TRMNL's form.
+      def custom_fields_with_env = custom_fields.transform_values { |v| with_env(v) }
+
       def user_data_overrides = @config['variables'] || {}
+
+      # plugin_merge references ("<keyname>_<id>") mapped to the trmnlp project directories that stand in for them.
+      def merged_plugins = @config['merged_plugins'] || {}
 
       # extra_variables lets the poller inject live values (e.g.
       # oauth_access_token) into the same custom-field render.
-      def with_custom_fields(value, extra_variables: {})
-        custom_fields_with_env = custom_fields.transform_values { |v| with_env(v) }
-        parse_liquid(value).render(custom_fields_with_env.merge(extra_variables))
+      def with_custom_fields(value, values:, extra_variables: {})
+        parse_liquid(value).render(values.merge(extra_variables))
       end
 
       def time_zone = @config['time_zone'] || 'UTC'
+
+      def ignored_lint_rules = Array(@config['ignored_lint_rules'])
 
       # Local override for the framework asset host (offline / mirrored
       # dev). Trmnlp-specific (local dev only) — so it stays in
@@ -79,6 +88,12 @@ module TRMNLP
       end
 
       private
+
+      def read_config
+        return {} unless paths.trmnlp_config.exist?
+
+        YAML.safe_load_file(paths.trmnlp_config, permitted_classes: [Date, Time]) || {}
+      end
 
       # NOTE: arrays (multi-select fields) and hashes are preserved as-is;
       # only their leaf values are stringified to match production

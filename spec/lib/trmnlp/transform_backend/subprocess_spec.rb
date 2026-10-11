@@ -62,6 +62,29 @@ RSpec.describe TRMNLP::TransformBackend::Subprocess do
       expect(JSON.parse(result.output)).to eq('echoed' => 'hello')
     end
 
+    context 'with an environment' do
+      subject(:backend) { described_class.new(environment: { 'TRMNLP_PROBE' => 'set' }) }
+
+      it 'gives it to the transform process' do
+        code = "def run(input) = { 'probe' => ENV['TRMNLP_PROBE'] }"
+        result = backend.execute(code:, language: 'ruby', stdin: '{}')
+
+        expect(JSON.parse(result.output)).to eq('probe' => 'set')
+      end
+    end
+
+    context 'with an on_spawn hook' do
+      subject(:backend) { described_class.new(on_spawn: ->(pid) { spawned << pid }) }
+
+      let(:spawned) { [] }
+
+      it 'hands it the transform process id' do
+        backend.execute(code: 'def run(input) = {}', language: 'ruby', stdin: '{}')
+
+        expect(spawned).to contain_exactly(a_kind_of(Integer))
+      end
+    end
+
     it 'returns a failure Result for unsupported languages' do
       result = backend.execute(code: 'noop', language: 'cobol', stdin: '')
 
@@ -78,6 +101,21 @@ RSpec.describe TRMNLP::TransformBackend::Subprocess do
 
       expect(result).not_to be_success
       expect(result.stderr).to include('boom')
+    end
+
+    context 'when the transform prints more than a pipe holds' do
+      let(:result) do
+        backend.execute(code: "def run(input); puts 'x' * 200_000; $stderr.puts 'y' * 200_000; input; end",
+                        language: 'ruby', stdin: '{}', timeout_seconds: 3)
+      end
+
+      it 'finishes' do
+        expect(result).to be_success
+      end
+
+      it 'keeps everything it printed' do
+        expect([result.stdout.bytesize, result.stderr.bytesize]).to eq([200_001, 200_001])
+      end
     end
 
     it 'enforces the timeout' do
