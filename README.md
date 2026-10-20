@@ -80,7 +80,7 @@ Direct Docker runs can create root-owned files on Linux. The convenience command
 docker pull trmnl/trmnlp
 ```
 
-Stop and restart any running container to use the updated image. Alternatively, add `--pull always` to `docker run` to check for a newer image each time you start it.
+Stop any running container, then rerun `docker run` or `docker compose up` to create a container from the updated image. Restarting an existing container does not update its image. Alternatively, add `--pull always` to `docker run` to check for a newer image each time you start it.
 
 To stay on a specific release, use a version tag such as `trmnl/trmnlp:v0.31.2` instead of `trmnl/trmnlp`. Available versions are listed on [Docker Hub](https://hub.docker.com/r/trmnl/trmnlp/tags).
 
