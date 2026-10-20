@@ -348,10 +348,10 @@ The `trmnlp login` command saves your API key to `~/.config/trmnlp/config.yml`.
 
 If an environment variable is more convenient (for example in a CI/CD pipeline), you can set `$TRMNL_API_KEY` instead.
 
-When running Docker directly, pass an already-set environment variable with `--env`:
+When running Docker directly, pass an already-set environment variable with `--env`. Keep `-it` so you can confirm overwriting an existing plugin:
 
 ```sh
-docker run --rm \
+docker run --rm -it \
   --env TRMNL_API_KEY \
   --volume "$(pwd):/plugin" \
   trmnl/trmnlp push
