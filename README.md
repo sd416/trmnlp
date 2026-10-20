@@ -11,22 +11,176 @@ The server watches the filesystem for changes to the Liquid templates, seamlessl
 
 ![Screenshot](docs/preview.png)
 
+## Contents
+
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Plugin Development](#plugin-development)
+- [Commands](#commands)
+- [Publishing Plugins](#publishing-plugins)
+- [Configuration](#configuration)
+- [Advanced Features](#advanced-features)
+- [Contributing](#contributing)
+- [Related guides](#related-guides)
+- [License](#license)
+
 ## Quick Start
 
-With [Docker](https://docs.docker.com/get-docker/) installed:
+Install [Docker](https://docs.docker.com/get-docker/), then pull the ready-made image from [Docker Hub](https://hub.docker.com/r/trmnl/trmnlp):
 
 ```sh
-mkdir -p ~/.local/bin         # install
-docker run --rm --entrypoint cat trmnl/trmnlp /app/templates/init/bin/trmnlp > ~/.local/bin/trmnlp
-chmod +x ~/.local/bin/trmnlp
-trmnlp init my_plugin         # scaffold a project
-cd my_plugin
-trmnlp serve                  # preview at http://localhost:4567
+docker pull trmnl/trmnlp
 ```
 
-Have Ruby 4.0 or newer? `gem install trmnl_preview` starts faster — see [Installing via RubyGems](#installing-via-rubygems).
+**No source checkout, image build, or local Ruby installation is needed.** The image includes the tools for previews, PNG rendering, plugin tests, and serverless transforms.
 
-## Project Structure
+From an existing plugin's directory, start the preview:
+
+```sh
+docker run --rm --init \
+  --publish 127.0.0.1:4567:4567 \
+  --volume "$(pwd):/plugin" \
+  trmnl/trmnlp serve
+```
+
+Open [http://localhost:4567](http://localhost:4567) and edit your plugin's `src/` files. The preview reloads automatically. Stop the server with `Ctrl+C`.
+
+Starting a new plugin? Use the [convenience command](#installing-the-convenience-command) to run `trmnlp init my_plugin`, then preview it with `trmnlp serve`.
+
+## Installation
+
+| Option | What you need | Best for |
+|---|---|---|
+| [Docker](#installing-via-docker) | Docker only; the image includes all runtime tools | Getting started without installing Ruby or compiling anything |
+| [RubyGems](#installing-via-rubygems) | Ruby 4.0+ and the tools needed by your plugin | Faster startup with a local Ruby setup |
+
+### Installing via Docker
+
+The prebuilt `trmnl/trmnlp` image supports `linux/amd64` and `linux/arm64`. Docker selects the image for your architecture automatically.
+
+#### Running commands
+
+The image runs the `trmnlp` CLI, so put the command after the image name. Mount your plugin directory at `/plugin` to keep source files and generated output on your machine:
+
+```sh
+docker run --rm --volume "$(pwd):/plugin" trmnl/trmnlp lint
+docker run --rm --init --volume "$(pwd):/plugin" trmnl/trmnlp build --png
+docker run --rm --init --volume "$(pwd):/plugin" trmnl/trmnlp test
+```
+
+Only `serve` needs a published port. Inside a container it binds to `0.0.0.0` automatically; the [quick-start command](#quick-start) publishes that port on your host's loopback address so the preview stays local. Outside Docker, `serve` binds to `127.0.0.1`.
+
+Direct Docker runs can create root-owned files on Linux. The convenience command below handles file ownership, configuration and cache mounts for you.
+
+#### Image tags and updates
+
+`trmnl/trmnlp` is shorthand for `trmnl/trmnlp:latest`. To update it, run:
+
+```sh
+docker pull trmnl/trmnlp
+```
+
+Stop and restart any running container to use the updated image. Alternatively, add `--pull always` to `docker run` to check for a newer image each time you start it.
+
+To stay on a specific release, use a version tag such as `trmnl/trmnlp:v0.31.2` instead of `trmnl/trmnlp`. Available versions are listed on [Docker Hub](https://hub.docker.com/r/trmnl/trmnlp/tags).
+
+#### Installing the convenience command
+
+On macOS or Linux with Bash, copy the launcher from the image to type `trmnlp` without repeating `docker run`:
+
+```sh
+mkdir -p ~/.local/bin
+docker run --rm --entrypoint cat trmnl/trmnlp /app/templates/init/bin/trmnlp > ~/.local/bin/trmnlp
+chmod +x ~/.local/bin/trmnlp
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+If `~/.local/bin` is not already on your `PATH`, add the export line to your shell's startup file as well. Then create and preview a plugin:
+
+```sh
+trmnlp init my_plugin
+cd my_plugin
+trmnlp serve
+```
+
+The launcher uses the local Ruby gem if available, otherwise Docker. In Docker mode it persists your credentials and cache, forwards `TRMNL_API_KEY`, and pulls a newer image once a day. The steps that run the image come from the image too, so the script itself does not go out of date.
+
+To pin the launcher's Docker image, set `IMAGE` in the script to a release tag such as `trmnl/trmnlp:v0.31.2` (v0.22.0 or later). `trmnlp init` puts the same script in each plugin as `bin/trmnlp`; you can run it directly or customize it for your project.
+
+#### Interactive Mode
+
+For running multiple commands in one container, start a shell:
+
+```sh
+mkdir -p "$HOME/.config/trmnlp" "$HOME/.cache/trmnl"
+docker run --rm --init -it \
+  --pull always \
+  --publish 127.0.0.1:4567:4567 \
+  --volume "$HOME/.config/trmnlp:/root/.config/trmnlp" \
+  --volume "$HOME/.cache/trmnl:/root/.cache/trmnl" \
+  --volume "$(pwd):/plugin" \
+  --entrypoint /bin/bash \
+  trmnl/trmnlp
+```
+
+Then run commands inside the container:
+
+```sh
+trmnlp login
+trmnlp clone my_plugin 12345
+cd my_plugin
+trmnlp serve
+```
+
+The config volume persists your API key between sessions. The cache volume keeps OAuth tokens, fetched data, and transform state. Use `exit` to leave the shell after stopping the server.
+
+#### Docker Compose
+
+For a checked-in configuration, add a `docker-compose.yml` to your plugin directory:
+
+```yaml
+services:
+  trmnlp:
+    image: trmnl/trmnlp
+    pull_policy: always
+    init: true
+    command: ["serve"]
+    ports:
+      - "127.0.0.1:4567:4567"
+    volumes:
+      - .:/plugin
+```
+
+```sh
+docker compose up
+```
+
+This uses the published image, not a local build. See [`examples/hn-stories/`](examples/hn-stories/) for a complete plugin with Compose configuration. For credentials and other environment variables, see [Authentication](#authentication).
+
+### Installing via RubyGems
+
+Prerequisites:
+
+- Ruby >= 4.0
+- For PNG rendering and `trmnlp test`:
+  - Firefox
+  - ImageMagick 7
+- For some `trmnlp test` features ([Testing](docs/testing.md)):
+  - libfaketime, for a transform's clock with `now:`
+  - zbar, for `have_qr_code`
+- Node 24, Python or PHP, for a transform in that language
+
+```sh
+gem install trmnl_preview
+```
+
+Then follow [Plugin Development](#plugin-development) to create or clone a project.
+
+## Plugin Development
+
+The examples below use `trmnlp` from RubyGems or the Docker convenience command. In a scaffolded plugin you can also use `bin/trmnlp`, or [run commands directly with Docker](#running-commands).
+
+### Project Structure
 
 This is the structure of a plugin project:
 
@@ -53,6 +207,7 @@ This is the structure of a plugin project:
 | `.github/workflows/trmnl.yml` | GitHub Actions workflow — lints every PR, deploys to TRMNL on `main` |
 | `.gitignore` | Keeps `trmnlp build` output out of version control |
 | `.trmnlp.yml` | Local dev-server config — not uploaded to TRMNL |
+| `bin/trmnlp` | Launcher that uses the local Ruby gem or the prebuilt Docker image |
 | `src/full.liquid` | Markup for the full screen |
 | `src/half_horizontal.liquid` | Top or bottom half of a stacked mashup |
 | `src/half_vertical.liquid` | Left or right half of a side-by-side mashup |
@@ -60,28 +215,29 @@ This is the structure of a plugin project:
 | `src/shared.liquid` | Reusable markup included by the other templates |
 | `src/settings.yml` | Plugin configuration — uploaded to TRMNL |
 
-## Creating a New Plugin
+### Creating a New Plugin
 
 You can start building a plugin locally, then `push` it to the TRMNL server for display on your device.
 
 ```sh
-trmnlp init [my_plugin]  # generate
-cd [my_plugin]
-trmnlp serve             # develop locally
-trmnlp login             # authenticate
-trmnlp push              # upload
+trmnlp init my_plugin  # generate
+cd my_plugin
+trmnlp serve           # develop locally; stop with Ctrl+C before continuing
+trmnlp login           # authenticate
+trmnlp push            # upload
 ```
 
-## Modifying an Existing Plugin
+### Modifying an Existing Plugin
 
 If you have built a plugin with the web-based editor, you can `clone` it, work on it locally, and `push` changes back to the server.
 
 ```sh
-trmnlp login                   # authenticate
-trmnlp clone [my_plugin] [id]  # first download
-cd [my_plugin]
-trmnlp serve                   # develop locally
-trmnlp push                    # upload
+trmnlp login                      # authenticate
+trmnlp list                       # find your plugin's ID
+trmnlp clone my_plugin 12345       # replace 12345 with that ID
+cd my_plugin
+trmnlp serve                      # develop locally; stop with Ctrl+C before continuing
+trmnlp push                       # upload
 ```
 
 ## Commands
@@ -102,16 +258,12 @@ trmnlp push                    # upload
 
 `trmnlp lint` exits non-zero when it finds issues, so you can gate CI on it. Run `trmnlp help` for all flags.
 
-Every command also checks RubyGems for a newer stable `trmnl_preview` release
-and, when one is available, suggests `gem update trmnl_preview`, or
-`bundle update trmnl_preview` when run through Bundler. An exact Gemfile pin must
-be changed before Bundler can update it. Notices go to stderr, keeping lint JSON
-output and exit status unchanged. The answer is cached for a day, so most runs
-make no request; `trmnlp version` always asks RubyGems. `--quiet` or
-`TRMNLP_NO_UPDATE_NOTIFIER=1` skips the check. Connection and read timeouts are
-two seconds each; current versions and an unavailable registry stay silent. The
-check never installs an update or changes your Gemfile or lockfile. Inside Docker there is no
-check: the `bin/trmnlp` script pulls a newer image once a day instead.
+### Linting Plugins
+
+```sh
+trmnlp lint
+trmnlp lint --format json
+```
 
 Lint findings include a stable snake_case rule ID, severity and source locations.
 Locations use project-relative paths and one-based line/column numbers, followed
@@ -143,7 +295,7 @@ To accept a rule's findings, list its rule ID under `ignored_lint_rules` in `.tr
 `trmnlp lint` then skips that check in both formats, so the CLI and CI agree. An unknown
 rule ID is an error that lists the known ones, so a typo does not pass quietly.
 
-## Building Static Files
+### Building Static Files
 
 `trmnlp build` renders every view to a static file under `_build/` — handy for exporting a snapshot or feeding the output into another pipeline. Run it from inside a plugin project:
 
@@ -167,13 +319,58 @@ trmnlp build --png --color-depth 2
 
 `--width`, `--height`, and `--color-depth` apply only with `--png`. PNG rendering needs Firefox and ImageMagick installed; plain `trmnlp build` needs neither.
 
-## Authentication
+### Testing Plugins
+
+`trmnlp test` runs the RSpec files in your plugin's `tests/` folder through the same pipeline `serve` and `build` use, with fake APIs and a fixed clock. `trmnlp init` starts a plugin with a test and a GitHub workflow that runs it. See [Testing Plugins](docs/testing.md) for the API, the matchers, snapshots and running tests in parallel.
+
+```sh
+trmnlp test
+```
+
+### Update Notices
+
+Every command also checks RubyGems for a newer stable `trmnl_preview` release
+and, when one is available, suggests `gem update trmnl_preview`, or
+`bundle update trmnl_preview` when run through Bundler. An exact Gemfile pin must
+be changed before Bundler can update it. Notices go to stderr, keeping lint JSON
+output and exit status unchanged. The answer is cached for a day, so most runs
+make no request; `trmnlp version` always asks RubyGems. `--quiet` or
+`TRMNLP_NO_UPDATE_NOTIFIER=1` skips the check. Connection and read timeouts are
+two seconds each; current versions and an unavailable registry stay silent. The
+check never installs an update or changes your Gemfile or lockfile. Inside Docker there is no
+check: the `bin/trmnlp` script pulls a newer image once a day instead.
+
+## Publishing Plugins
+
+### Authentication
 
 The `trmnlp login` command saves your API key to `~/.config/trmnlp/config.yml`.
 
 If an environment variable is more convenient (for example in a CI/CD pipeline), you can set `$TRMNL_API_KEY` instead.
 
-## Continuous Integration
+When running Docker directly, pass an already-set environment variable with `--env`:
+
+```sh
+docker run --rm \
+  --env TRMNL_API_KEY \
+  --volume "$(pwd):/plugin" \
+  trmnl/trmnlp push
+```
+
+For `login`, use `-it` and mount the config directory so the saved API key survives the container:
+
+```sh
+mkdir -p "$HOME/.config/trmnlp"
+docker run --rm -it \
+  --volume "$HOME/.config/trmnlp:/root/.config/trmnlp" \
+  trmnl/trmnlp login
+```
+
+Use that same config mount for later `list`, `clone`, `pull`, and `push` commands. The convenience command handles it automatically.
+
+Docker does not inherit your shell's environment automatically. Pass any additional plugin secrets or OAuth variables with `--env VARIABLE_NAME`, or Compose's `environment` setting. Do not commit credentials to your plugin or Compose file.
+
+### Continuous Integration
 
 `trmnlp init` and `trmnlp clone` scaffold a `.github/workflows/trmnl.yml`
 workflow and initialize a Git repository, so a fresh project is ready to push
@@ -223,118 +420,9 @@ only on `main`.
 > plugin with that id; without one it creates a *new* plugin on every run.
 > Projects made with `trmnlp clone` or `trmnlp pull` already have it.
 
-## Running trmnlp
+## Configuration
 
-The `bin/trmnlp` script is provided as a convenience. It will use the local Ruby gem if available, falling back to the `trmnl/trmnlp` Docker image.
-
-You can modify the `bin/trmnlp` script to set up environment variables (plugin secrets, etc.) before running the server.
-
-**Docker or gem?** The Docker image has everything trmnlp needs, including Firefox and the tools `trmnlp test` uses. The gem starts a little faster, but needs Ruby 4.0 and those tools installed yourself.
-
-### Installing via Docker
-
-To type `trmnlp` as with the gem, copy the script from the image onto your `PATH`:
-
-```sh
-mkdir -p ~/.local/bin
-docker run --rm --entrypoint cat trmnl/trmnlp /app/templates/init/bin/trmnlp > ~/.local/bin/trmnlp
-chmod +x ~/.local/bin/trmnlp
-```
-
-It runs each command in the image and pulls a newer image once a day. The steps that run the image
-come from the image too, so the script itself does not go out of date. To stay on one release, set
-`IMAGE` in the script to a tag such as `trmnl/trmnlp:v0.22.0` (v0.22.0 or later). `trmnlp init` puts
-the same script in each plugin as `bin/trmnlp`.
-
-Or run the image yourself:
-
-```sh
-docker run \
-    --pull always \
-    --publish 4567:4567 \
-    --volume "$(pwd):/plugin" \
-    trmnl/trmnlp serve \
-    --bind 0.0.0.0
-```
-
-`--pull always` checks the registry on every run and pulls a newer image if one exists, so you don't have to remember to `docker pull` after each release.
-
-Inside a container, `serve` binds to `0.0.0.0` automatically (it detects `/.dockerenv`) so the preview is reachable from your host browser. Outside Docker it binds to `127.0.0.1`.
-
-Swap `serve` for any other command (`lint`, `login`, `clone`, etc.) to run it in a one-off container.
-
-#### Interactive Mode
-
-For running multiple commands (login, clone, serve), you can start an interactive shell:
-
-```sh
-docker run -it \
-    --pull always \
-    --publish 4567:4567 \
-    --volume "$HOME/.config/trmnlp:/root/.config/trmnlp" \
-    --volume "$(pwd):/plugin" \
-    --entrypoint /bin/bash \
-    trmnl/trmnlp
-```
-
-Then run commands inside the container:
-
-```sh
-trmnlp login
-trmnlp clone my_plugin 12345
-cd my_plugin
-trmnlp serve
-```
-
-The config volume (`$HOME/.config/trmnlp`) persists your API key between sessions.
-
-#### Docker Compose
-
-For a checked-in config — like [`examples/hn-stories/`](examples/hn-stories/) uses — a minimal `docker-compose.yml`:
-
-```yaml
-services:
-  trmnlp:
-    image: trmnl/trmnlp
-    pull_policy: always
-    command: ["serve"]
-    ports:
-      - "4567:4567"
-    volumes:
-      - .:/plugin
-```
-
-Then `docker compose up`.
-
-#### Building Locally
-
-To build the Docker image from source:
-
-```sh
-git clone https://github.com/usetrmnl/trmnlp.git
-cd trmnlp
-docker build -t trmnlp .
-```
-
-### Installing via RubyGems
-
-Prerequisites:
-
-- Ruby >= 4.0
-- For PNG rendering and `trmnlp test`:
-  - Firefox
-  - ImageMagick 7
-- For some `trmnlp test` features ([Testing](docs/testing.md)):
-  - libfaketime, for a transform's clock with `now:`
-  - zbar, for `have_qr_code`
-- Node 24, Python or PHP, for a transform in that language
-
-```sh
-gem install trmnl_preview
-trmnlp serve
-```
-
-## `.trmnlp.yml` Reference - Project Config
+### `.trmnlp.yml` Reference - Project Config
 
 The `.trmnlp.yml` file lives in the root of the plugin project, and is for configuring the local dev server.
 
@@ -390,13 +478,29 @@ merged_plugins:
 An `async_polling` plugin gets `{{ callback_url }}` in its polling url. It points at
 `trmnlp serve`'s `/callback` route, where the API posts `merge_variables` after answering 202.
 
-## OAuth2
+### `src/settings.yml` Reference (Plugin Config)
+
+The `settings.yml` file is part of the plugin definition, and is uploaded and downloaded by `trmnlp push` / `pull`.
+
+`framework_version:` pins the [TRMNL Design System](https://trmnl.com/framework) version this plugin renders against — `latest` (the default) tracks the newest release, or set a specific version for reproducibility. It lives here rather than in `.trmnlp.yml` so the value round-trips with the hosted plugin service. The list of known versions is read from the [design system's published manifest](https://github.com/usetrmnl/trmnl-framework) once per run; if that request fails, the copy bundled in the gem is used. Because either list can lag a release, any well-formed version number is accepted — a version the manifest has not heard of still renders against that version's assets rather than failing — `trmnlp serve` and `build` note it with a warning, in case it was a typo.
+
+`description:` is an optional one-line summary of the plugin, up to 35 characters. `trmnlp lint` reports anything longer, and `trmnlp list` shows it next to each plugin name.
+
+`recipe_overview:` is optional free text for a published recipe, with no length limit. TRMNL shows it on the public recipe page with its line breaks kept, and its first 120 characters feed the page's link preview. An overview of at least 100 words lets the recipe appear in Google and other search engines; `trmnlp lint` reports one that is shorter. Put credits and links in an About This Plugin field instead. Leave the key out to keep the overview already on TRMNL; an empty value clears it.
+
+A recipe needs a custom field with `field_type: author_bio` that gives users a way to reach the author: an `email_address`, a `github_url`, a `learn_more_url`, or an email address or link in its `description`. `trmnlp lint` reports a recipe without one. A Discord link or handle alone is not enough, because not every user has access to Discord.
+
+See [TRMNL documentation](https://help.trmnl.com/en/articles/10542599-importing-and-exporting-private-plugins#h_581fb988f0) for details on this file's contents.
+
+## Advanced Features
+
+### OAuth2
 
 This feature is in beta. Please report incorrect behaviour at https://github.com/usetrmnl/trmnlp/issues.
 
 Some private plugins fetch data from a third-party API that requires the user to authorize access first (the OAuth2 authorization code flow). `trmnlp` can run that flow locally so you can preview the plugin with a real token. It injects the token into your polling request the same way the hosted service does, so a plugin that works locally behaves the same once deployed.
 
-### 1. Configure the provider
+#### 1. Configure the provider
 
 Add the flat `oauth_*` keys to `src/settings.yml`. These are the provider definition, and they round-trip through `trmnlp push` and `pull` (the hosted service stores them on the plugin setting):
 
@@ -420,7 +524,7 @@ export TRMNL_OAUTH_CLIENT_SECRET=your-oauth-app-client-secret
 
 PKCE-only providers do not need a client secret.
 
-### 2. Register the redirect URI
+#### 2. Register the redirect URI
 
 In your OAuth app on the provider's site, register this redirect URI:
 
@@ -430,11 +534,11 @@ http://localhost:4567/oauth/callback
 
 Match the port if you run `trmnlp serve` on a different one.
 
-### 3. Connect
+#### 3. Connect
 
 Run `trmnlp serve` and open the preview. When OAuth is configured but not yet connected, a **Connect account** banner appears. Click it to authorize in your browser. `trmnlp` stores the tokens in its cache directory (never in your project) and refreshes them automatically before they expire. Use the **Disconnect** link to reconnect after changing scopes.
 
-### 4. Use the token
+#### 4. Use the token
 
 Reference the token in your `src/settings.yml` polling configuration with the same variables the hosted service exposes:
 
@@ -448,7 +552,7 @@ For example, as a polling header:
 Authorization=Bearer {{ oauth_access_token }}
 ```
 
-## Serverless Transforms
+### Serverless Transforms
 
 `trmnlp` can run a transform script (`python`, `ruby`, `php`, or `node`) against the polled API response before handing data to your Liquid templates — matching the hosted plugin service's behavior.
 
@@ -467,7 +571,7 @@ def run(input):
 
 The trmnlp image bundles `python3`, `node`, `php`, and `ruby` — no sidecar daemon required.
 
-### Language detection
+#### Language detection
 
 The transform language comes from the **file extension**:
 
@@ -480,7 +584,7 @@ The transform language comes from the **file extension**:
 
 `trmnlp push` uploads the file under its own name, and the hosted service records `serverless_language` from the extension automatically — you don't need to set it by hand. `trmnlp pull` / `trmnlp clone` bring the transform file back under the same name.
 
-### Pointing at a remote daemon
+#### Pointing at a remote daemon
 
 For production-fidelity testing against a real microVM daemon, set `serverless_daemon_url:` in `.trmnlp.yml`:
 
@@ -500,27 +604,11 @@ Or commit a per-project value to `.trmnlp.yml` as `serverless_daemon_api_key:` �
 
 A complete worked example lives at [`examples/hn-stories/`](examples/hn-stories/) — a polling plugin that fetches the Hacker News top-stories list, enriches each story via additional HTTPS calls from inside the transform, and renders the result with TRMNL design-system markup across all four sizes. `cd examples/hn-stories && docker compose up` and you're running it.
 
-## `src/settings.yml` Reference (Plugin Config)
+## Contributing
 
-The `settings.yml` file is part of the plugin definition, and is uploaded and downloaded by `trmnlp push` / `pull`.
+Bug reports and pull requests are welcome on GitHub at https://github.com/usetrmnl/trmnlp.
 
-`framework_version:` pins the [TRMNL Design System](https://trmnl.com/framework) version this plugin renders against — `latest` (the default) tracks the newest release, or set a specific version for reproducibility. It lives here rather than in `.trmnlp.yml` so the value round-trips with the hosted plugin service. The list of known versions is read from the [design system's published manifest](https://github.com/usetrmnl/trmnl-framework) once per run; if that request fails, the copy bundled in the gem is used. Because either list can lag a release, any well-formed version number is accepted — a version the manifest has not heard of still renders against that version's assets rather than failing — `trmnlp serve` and `build` note it with a warning, in case it was a typo.
-
-`description:` is an optional one-line summary of the plugin, up to 35 characters. `trmnlp lint` reports anything longer, and `trmnlp list` shows it next to each plugin name.
-
-`recipe_overview:` is optional free text for a published recipe, with no length limit. TRMNL shows it on the public recipe page with its line breaks kept, and its first 120 characters feed the page's link preview. An overview of at least 100 words lets the recipe appear in Google and other search engines; `trmnlp lint` reports one that is shorter. Put credits and links in an About This Plugin field instead. Leave the key out to keep the overview already on TRMNL; an empty value clears it.
-
-A recipe needs a custom field with `field_type: author_bio` that gives users a way to reach the author: an `email_address`, a `github_url`, a `learn_more_url`, or an email address or link in its `description`. `trmnlp lint` reports a recipe without one. A Discord link or handle alone is not enough, because not every user has access to Discord.
-
-See [TRMNL documentation](https://help.trmnl.com/en/articles/10542599-importing-and-exporting-private-plugins#h_581fb988f0) for details on this file's contents.
-
-
-
-## Testing Plugins
-
-`trmnlp test` runs the RSpec files in your plugin's `tests/` folder through the same pipeline `serve` and `build` use, with fake APIs and a fixed clock. `trmnlp init` starts a plugin with a test and a GitHub workflow that runs it. See [Testing Plugins](https://github.com/usetrmnl/trmnlp/blob/main/docs/testing.md) for the API, the matchers, snapshots and running tests in parallel.
-
-## Development
+### Development
 
 To run trmnlp from a checkout of this repo — handy for trying unreleased changes or contributing:
 
@@ -533,7 +621,18 @@ bundle exec bin/trmnlp serve
 
 The repo pins its Ruby version in `.ruby-version` — a version manager will pick it up when you `cd` in. This `bin/trmnlp` runs the CLI straight from `lib/`; it's a different script from the gem-or-Docker `bin/trmnlp` that `trmnlp init` scaffolds into a plugin project.
 
-## Tests
+### Building Locally
+
+Building the Docker image is only needed to try changes to trmnlp itself. For normal plugin development, use the [prebuilt image](#installing-via-docker).
+
+From a checkout of this repository:
+
+```sh
+docker build -t trmnlp:local .
+docker run --rm trmnlp:local help
+```
+
+### Tests
 
 To test, run:
 
@@ -543,7 +642,7 @@ bin/rake
 
 Specs run under SimpleCov; a coverage report is written to `coverage/`.
 
-## Releasing
+### Releasing
 
 Releases are automated. The [`Release` workflow](.github/workflows/release.yaml)
 fires whenever `lib/trmnlp/version.rb` changes on `main`, then tags the commit,
@@ -567,10 +666,6 @@ By convention, add a matching `CHANGELOG.md` entry in the same change.
 - [Recipe best practices](https://help.trmnl.com/en/articles/11395668-recipe-best-practices) and [Demo Data for Publishing Plugins](https://help.trmnl.com/en/articles/12772238-demo-data-for-publishing-plugins)
 - [TRMNL CLI](https://help.trmnl.com/en/articles/17226209-trmnl-cli): the rest of your account from the terminal
 - [MCP Server](https://help.trmnl.com/en/articles/17432548-mcp-server) and our [agent skills](https://github.com/usetrmnl/trmnl-agent-skills): build plugins with an AI agent
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/usetrmnl/trmnlp.
 
 ## License
 
