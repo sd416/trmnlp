@@ -32,7 +32,8 @@ Install [Docker](https://docs.docker.com/get-docker/), then pull the ready-made 
 docker pull trmnl/trmnlp
 ```
 
-**No source checkout, image build, or local Ruby installation is needed.** The image includes the tools for previews, PNG rendering, plugin tests, and serverless transforms.
+You do not need to clone this repository, build an image, or install Ruby.
+The image includes tools for previews, PNG rendering, plugin tests, and serverless transforms.
 
 From an existing plugin's directory, start the preview:
 
@@ -43,7 +44,10 @@ docker run --rm --init \
   trmnl/trmnlp serve
 ```
 
-Open [http://localhost:4567](http://localhost:4567) and edit your plugin's `src/` files. The preview reloads automatically. Stop the server with `Ctrl+C`.
+Open [http://localhost:4567](http://localhost:4567).
+Edit files in `src/`.
+The preview reloads automatically.
+Use `Ctrl+C` to stop the server.
 
 Starting a new plugin? Use the [convenience command](#installing-the-convenience-command) to run `trmnlp init my_plugin`, then preview it with `trmnlp serve`.
 
@@ -51,12 +55,14 @@ Starting a new plugin? Use the [convenience command](#installing-the-convenience
 
 | Option | What you need | Best for |
 |---|---|---|
-| [Docker](#installing-via-docker) | Docker only; the image includes all runtime tools | Getting started without installing Ruby or compiling anything |
+| [Docker](#installing-via-docker) | Docker only | Getting started without installing Ruby or compiling |
 | [RubyGems](#installing-via-rubygems) | Ruby 4.0+ and the tools needed by your plugin | Faster startup with a local Ruby setup |
 
 ### Installing via Docker
 
-The prebuilt `trmnl/trmnlp` image supports `linux/amd64` and `linux/arm64`. Docker selects the image for your architecture automatically.
+Use the prebuilt `trmnl/trmnlp` image.
+It supports `linux/amd64` and `linux/arm64`.
+Docker selects the correct image for your architecture.
 
 #### Running commands
 
@@ -68,21 +74,30 @@ docker run --rm --init --volume "$(pwd):/plugin" trmnl/trmnlp build --png
 docker run --rm --init --volume "$(pwd):/plugin" trmnl/trmnlp test
 ```
 
-Only `serve` needs a published port. Inside a container it binds to `0.0.0.0` automatically; the [quick-start command](#quick-start) publishes that port on your host's loopback address so the preview stays local. Outside Docker, `serve` binds to `127.0.0.1`.
+Only `serve` needs a published port.
+Inside Docker, `serve` binds to `0.0.0.0`.
+The [quick-start command](#quick-start) publishes that port on your host loopback address (`127.0.0.1`) so preview traffic stays local.
+Outside Docker, `serve` binds to `127.0.0.1`.
 
 Direct Docker runs can create root-owned files on Linux. The convenience command below handles file ownership, configuration and cache mounts for you.
 
 #### Image tags and updates
 
-`trmnl/trmnlp` is shorthand for `trmnl/trmnlp:latest`. To update it, run:
+`trmnl/trmnlp` means `trmnl/trmnlp:latest`.
+To update the local copy, run:
 
 ```sh
 docker pull trmnl/trmnlp
 ```
 
-Stop any running container, then rerun `docker run` or `docker compose up` to create a container from the updated image. Restarting an existing container does not update its image. Alternatively, add `--pull always` to `docker run` to check for a newer image each time you start it.
+Stop any running container.
+Then run `docker run` or `docker compose up` again to create a container from the updated image.
+Restarting an existing container does not update its image.
+You can also add `--pull always` to `docker run` to check for a newer image at startup.
 
-To stay on a specific release, use a version tag such as `trmnl/trmnlp:v0.31.2` instead of `trmnl/trmnlp`. Available versions are listed on [Docker Hub](https://hub.docker.com/r/trmnl/trmnlp/tags).
+To stay on one release, use a version tag such as `trmnl/trmnlp:v0.31.2`.
+Do not use `:latest` when you need fixed behavior.
+Available versions are listed on [Docker Hub](https://hub.docker.com/r/trmnl/trmnlp/tags).
 
 #### Installing the convenience command
 
